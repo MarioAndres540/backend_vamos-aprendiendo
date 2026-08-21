@@ -9,6 +9,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { OAuthLoginDto } from './dto/oauth-login.dto';
+import { Role } from '../../common/enums/role.enum';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -25,6 +26,12 @@ export class AuthService {
 
   async register(dto: RegisterDto) {
     const supabase = this.supabaseService.getClient();
+
+    const role: Role = dto.role === 'usuario' ? Role.USER : Role.TEST;
+    const trialEndsAt =
+      role === Role.TEST
+        ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+        : null;
 
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: dto.email,
@@ -45,6 +52,9 @@ export class AuthService {
       age: dto.age,
       phone: dto.phone,
       accepted_terms: dto.acceptedTerms,
+      role: role,
+      trial_ends_at: trialEndsAt,
+      is_active: true,
     });
 
     if (profileError) {
@@ -52,7 +62,13 @@ export class AuthService {
       throw new BadRequestException(`Error al crear perfil: ${profileError.message}`);
     }
 
-    return await this.generateTokenPair(authData.user.id, dto.email);
+    return await this.generateTokenPair(
+      authData.user.id,
+      dto.email,
+      role,
+      trialEndsAt,
+      true,
+    );
   }
 
   async login(dto: LoginDto) {
@@ -67,7 +83,32 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    return await this.generateTokenPair(data.user.id, data.user.email || dto.email);
+    // Obtener información del perfil (rol, estado activo, trial_ends_at)
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role, trial_ends_at, is_active')
+      .eq('id', data.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      throw new UnauthorizedException('No se encontró el perfil de usuario asociado');
+    }
+
+    if (profile.is_active === false) {
+      throw new UnauthorizedException('Tu cuenta ha sido desactivada. Por favor contacta al administrador.');
+    }
+
+    const role: Role = (profile.role as Role) || Role.TEST;
+    const trialEndsAt = profile.trial_ends_at || null;
+    const isActive = profile.is_active !== false;
+
+    return await this.generateTokenPair(
+      data.user.id,
+      data.user.email || dto.email,
+      role,
+      trialEndsAt,
+      isActive,
+    );
   }
 
   // ==========================================
@@ -93,9 +134,13 @@ export class AuthService {
     // Verificar si ya existe perfil registrado para el usuario OAuth
     const { data: profile } = await supabase
       .from('profiles')
-      .select('id')
+      .select('id, role, trial_ends_at, is_active')
       .eq('id', userId)
       .single();
+
+    let userRole: Role = Role.TEST;
+    let trialEndsAt: string | null = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    let isActive = true;
 
     // Si no existe perfil, creamos un registro inicial a partir del metadata
     if (!profile) {
@@ -113,10 +158,20 @@ export class AuthService {
         age: 18,
         phone: metadata.phone || '+0000000000',
         accepted_terms: true,
+        role: userRole,
+        trial_ends_at: trialEndsAt,
+        is_active: true,
       });
+    } else {
+      if (profile.is_active === false) {
+        throw new UnauthorizedException('Tu cuenta ha sido desactivada. Por favor contacta al administrador.');
+      }
+      userRole = (profile.role as Role) || Role.TEST;
+      trialEndsAt = profile.trial_ends_at || null;
+      isActive = profile.is_active !== false;
     }
 
-    return await this.generateTokenPair(userId, email);
+    return await this.generateTokenPair(userId, email, userRole, trialEndsAt, isActive);
   }
 
   // ==========================================
@@ -169,8 +224,29 @@ export class AuthService {
       .update({ is_revoked: true })
       .eq('id', tokenRecord.id);
 
+    // Consultar el perfil actual para sincronizar rol y estado activo
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, trial_ends_at, is_active')
+      .eq('id', payload.sub)
+      .single();
+
+    if (profile && profile.is_active === false) {
+      throw new UnauthorizedException('Tu cuenta ha sido desactivada');
+    }
+
+    const currentRole: Role = (profile?.role as Role) || payload.role || Role.TEST;
+    const currentTrialEndsAt = profile?.trial_ends_at ?? payload.trialEndsAt ?? null;
+    const currentIsActive = profile ? profile.is_active !== false : true;
+
     // Generar un nuevo par de tokens
-    return await this.generateTokenPair(payload.sub, payload.email);
+    return await this.generateTokenPair(
+      payload.sub,
+      payload.email,
+      currentRole,
+      currentTrialEndsAt,
+      currentIsActive,
+    );
   }
 
   async logout(userId: string, refreshToken: string) {
@@ -190,8 +266,20 @@ export class AuthService {
   // HELPER INTERNO: GENERACIÓN Y PERSISTENCIA DE TOKENS
   // ==========================================
 
-  private async generateTokenPair(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  private async generateTokenPair(
+    userId: string,
+    email: string,
+    role: Role = Role.TEST,
+    trialEndsAt: string | null = null,
+    isActive: boolean = true,
+  ) {
+    const payload = {
+      sub: userId,
+      email,
+      role,
+      trialEndsAt,
+      isActive,
+    };
 
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get<string>('JWT_SECRET') || 'default_secret_key_vamos_aprendiendo',
@@ -220,7 +308,13 @@ export class AuthService {
       accessToken,
       refreshToken,
       expiresIn: 900, // 15 minutos en segundos
-      user: { id: userId, email },
+      user: {
+        id: userId,
+        email,
+        role,
+        trialEndsAt,
+        isActive,
+      },
     };
   }
 

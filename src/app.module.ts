@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseModule } from './modules/supabase/supabase.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 @Module({
@@ -14,14 +15,17 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
       envFilePath: '.env',
     }),
     SupabaseModule,
-    AuthModule
+    AuthModule,
+    AdminModule,
   ],
   controllers: [AppController],
-  providers: [AppService,
+  providers: [
+    AppService,
     {
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
-    },],
+    },
+  ],
 })
-export class AppModule { }
+export class AppModule {}
 
