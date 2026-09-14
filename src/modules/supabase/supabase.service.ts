@@ -7,7 +7,7 @@ export class SupabaseService implements OnModuleInit {
   private readonly logger = new Logger(SupabaseService.name);
   private client: SupabaseClient;
 
-  constructor(private configService: ConfigService) {}
+  constructor(private configService: ConfigService) { }
 
   onModuleInit() {
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
@@ -66,4 +66,5 @@ export class SupabaseService implements OnModuleInit {
       this.logger.error(`❌ Error al verificar conexión con Supabase: ${err.message}`);
     }
   }
+
 }

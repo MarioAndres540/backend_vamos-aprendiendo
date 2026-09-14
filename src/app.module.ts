@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { SupabaseModule } from './modules/supabase/supabase.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { TeacherModule } from './modules/teacher/teacher.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 @Module({
@@ -17,6 +18,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     SupabaseModule,
     AuthModule,
     AdminModule,
+    TeacherModule
   ],
   controllers: [AppController],
   providers: [
@@ -27,5 +29,5 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }
 

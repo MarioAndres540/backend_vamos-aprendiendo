@@ -127,7 +127,12 @@ export class AdminService {
     if (dto.phone !== undefined) updatePayload.phone = dto.phone;
     if (dto.role !== undefined) {
       updatePayload.role = dto.role;
-      if (dto.role === Role.USER && dto.trialEndsAt === undefined) {
+      if (
+        (dto.role === Role.USER ||
+          dto.role === Role.TEACHER ||
+          dto.role === Role.ADMIN) &&
+        dto.trialEndsAt === undefined
+      ) {
         updatePayload.trial_ends_at = null;
       }
     }

@@ -25,8 +25,12 @@ export class ActiveAccessGuard implements CanActivate {
       });
     }
 
-    // Admin y Usuario regular tienen acceso permanente
-    if (user.role === Role.ADMIN || user.role === Role.USER) {
+    // Admin, Usuario regular y Profesor tienen acceso permanente
+    if (
+      user.role === Role.ADMIN ||
+      user.role === Role.USER ||
+      user.role === Role.TEACHER
+    ) {
       return true;
     }
 

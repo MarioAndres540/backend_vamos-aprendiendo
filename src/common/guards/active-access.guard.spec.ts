@@ -51,6 +51,16 @@ describe('ActiveAccessGuard', () => {
     expect(guard.canActivate(context)).toBe(true);
   });
 
+  it('debe permitir acceso sin restricciones si el rol es Profesor', () => {
+    const context = mockExecutionContext({
+      role: Role.TEACHER,
+      isActive: true,
+      trialEndsAt: null,
+    });
+
+    expect(guard.canActivate(context)).toBe(true);
+  });
+
   it('debe permitir acceso a un usuario Test con periodo de prueba vigente (<= 14 días)', () => {
     const futureDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
     const context = mockExecutionContext({

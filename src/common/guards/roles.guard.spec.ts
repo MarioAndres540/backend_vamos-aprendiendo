@@ -43,6 +43,13 @@ describe('RolesGuard', () => {
     expect(guard.canActivate(context)).toBe(true);
   });
 
+  it('debe permitir acceso a un Profesor si la ruta requiere Role.TEACHER', () => {
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([Role.TEACHER]);
+
+    const context = mockExecutionContext({ role: Role.TEACHER });
+    expect(guard.canActivate(context)).toBe(true);
+  });
+
   it('debe lanzar ForbiddenException si el usuario no tiene el rol requerido', () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([Role.ADMIN]);
 
