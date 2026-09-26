@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
@@ -18,7 +18,7 @@ export class AuthService {
     private readonly supabaseService: SupabaseService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   // ==========================================
   // REGISTRO Y LOGIN TRADICIONAL
@@ -80,18 +80,18 @@ export class AuthService {
     });
 
     if (error || !data.user) {
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('Credenciales invÃ¡lidas');
     }
 
-    // Obtener información del perfil (rol, estado activo, trial_ends_at)
+    // Obtener informaciÃ³n del perfil (rol, estado activo, trial_ends_at)
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('role, trial_ends_at, is_active')
+      .select('role, trial_ends_at, is_active, has_completed_setup')
       .eq('id', data.user.id)
       .single();
 
     if (profileError || !profile) {
-      throw new UnauthorizedException('No se encontró el perfil de usuario asociado');
+      throw new UnauthorizedException('No se encontro el perfil de usuario asociado');
     }
 
     if (profile.is_active === false) {
@@ -101,6 +101,7 @@ export class AuthService {
     const role: Role = (profile.role as Role) || Role.TEST;
     const trialEndsAt = profile.trial_ends_at || null;
     const isActive = profile.is_active !== false;
+    const hasCompletedSetup = profile.has_completed_setup === true;
 
     return await this.generateTokenPair(
       data.user.id,
@@ -108,11 +109,12 @@ export class AuthService {
       role,
       trialEndsAt,
       isActive,
+      hasCompletedSetup,
     );
   }
 
   // ==========================================
-  // AUTENTICACIÓN SOCIAL (OAuth 2.0)
+  // AUTENTICACIÃ“N SOCIAL (OAuth 2.0)
   // ==========================================
 
   async loginWithOAuth(dto: OAuthLoginDto) {
@@ -125,7 +127,7 @@ export class AuthService {
     });
 
     if (error || !data.user) {
-      throw new UnauthorizedException(`Error de autenticación con ${dto.provider}: ${error?.message}`);
+      throw new UnauthorizedException(`Error de autenticaciÃ³n con ${dto.provider}: ${error?.message}`);
     }
 
     const userId = data.user.id;
@@ -175,7 +177,7 @@ export class AuthService {
   }
 
   // ==========================================
-  // RENOVACIÓN DE REFRESH TOKENS (ROTACIÓN + HASH SHA-256)
+  // RENOVACIÃ“N DE REFRESH TOKENS (ROTACIÃ“N + HASH SHA-256)
   // ==========================================
 
   async refreshTokens(refreshToken: string) {
@@ -185,13 +187,13 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'default_refresh_secret',
       });
     } catch (err) {
-      throw new UnauthorizedException('Sesión expirada o refresh token inválido');
+      throw new UnauthorizedException('SesiÃ³n expirada o refresh token invÃ¡lido');
     }
 
     const supabase = this.supabaseService.getClient();
     const tokenHash = this.hashToken(refreshToken);
 
-    // Buscar el token específico por su HASH
+    // Buscar el token especÃ­fico por su HASH
     const { data: tokenRecord, error } = await supabase
       .from('refresh_tokens')
       .select('*')
@@ -202,7 +204,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token no reconocido');
     }
 
-    // Detección de Reutilización de Tokens (Token Reuse Detection)
+    // DetecciÃ³n de ReutilizaciÃ³n de Tokens (Token Reuse Detection)
     if (tokenRecord.is_revoked) {
       // Revocar TODOS los tokens del usuario por seguridad
       await supabase
@@ -210,15 +212,15 @@ export class AuthService {
         .update({ is_revoked: true })
         .eq('user_id', payload.sub);
 
-      throw new UnauthorizedException('Intento de reutilización de token detectado. Sesiones cerradas por seguridad.');
+      throw new UnauthorizedException('Intento de reutilizaciÃ³n de token detectado. Sesiones cerradas por seguridad.');
     }
 
-    // Verificar si el token ya expiró en BD
+    // Verificar si el token ya expirÃ³ en BD
     if (new Date(tokenRecord.expires_at) < new Date()) {
       throw new UnauthorizedException('Refresh token expirado');
     }
 
-    // Revocar el token actual (Rotación estricta)
+    // Revocar el token actual (RotaciÃ³n estricta)
     await supabase
       .from('refresh_tokens')
       .update({ is_revoked: true })
@@ -259,11 +261,11 @@ export class AuthService {
       .eq('user_id', userId)
       .eq('token_hash', tokenHash);
 
-    return { message: 'Sesión cerrada exitosamente' };
+    return { message: 'SesiÃ³n cerrada exitosamente' };
   }
 
   // ==========================================
-  // HELPER INTERNO: GENERACIÓN Y PERSISTENCIA DE TOKENS
+  // HELPER INTERNO: GENERACIÃ“N Y PERSISTENCIA DE TOKENS
   // ==========================================
 
   private async generateTokenPair(
@@ -272,6 +274,7 @@ export class AuthService {
     role: Role = Role.TEST,
     trialEndsAt: string | null = null,
     isActive: boolean = true,
+    hasCompletedSetup: boolean = false,
   ) {
     const payload = {
       sub: userId,
@@ -312,8 +315,8 @@ export class AuthService {
         id: userId,
         email,
         role,
-        trialEndsAt,
         isActive,
+        hasCompletedSetup,
       },
     };
   }
