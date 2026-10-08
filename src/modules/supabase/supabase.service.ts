@@ -2,10 +2,21 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+// En el servidor no hay almacenamiento ni URL de navegador: no persistir ni refrescar sesiones
+const SERVER_AUTH_OPTIONS = {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+};
+
 @Injectable()
 export class SupabaseService implements OnModuleInit {
   private readonly logger = new Logger(SupabaseService.name);
   private client: SupabaseClient;
+  private supabaseUrl?: string;
+  private supabaseKey?: string;
 
   constructor(private configService: ConfigService) { }
 
@@ -23,8 +34,12 @@ export class SupabaseService implements OnModuleInit {
       return;
     }
 
+    this.supabaseUrl = supabaseUrl;
+    this.supabaseKey = supabaseKey;
+
     try {
-      this.client = createClient(supabaseUrl, supabaseKey);
+      // Cliente administrativo (llave secreta): nunca debe guardar sesiones de usuario
+      this.client = createClient(supabaseUrl, supabaseKey, SERVER_AUTH_OPTIONS);
       this.logger.log('🔌 Cliente de Supabase inicializado correctamente.');
       this.testConnection();
     } catch (error: any) {
@@ -34,6 +49,20 @@ export class SupabaseService implements OnModuleInit {
 
   getClient(): SupabaseClient {
     return this.client;
+  }
+
+  /**
+   * Crea un cliente desechable para operaciones que inician una sesión de usuario
+   * (signUp, signInWithPassword, signInWithIdToken).
+   * supabase-js guarda en memoria la sesión obtenida y la usa en las consultas siguientes de ese cliente;
+   * si se hiciera sobre el cliente compartido, todo el backend consultaría la base como ese usuario (con RLS)
+   * en lugar de usar la llave secreta.
+   */
+  createAuthClient(): SupabaseClient {
+    if (!this.supabaseUrl || !this.supabaseKey) {
+      throw new Error('Supabase no está configurado (SUPABASE_URL / llave en .env)');
+    }
+    return createClient(this.supabaseUrl, this.supabaseKey, SERVER_AUTH_OPTIONS);
   }
 
   async testConnection() {

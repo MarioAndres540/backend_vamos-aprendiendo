@@ -1,98 +1,137 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend — Vamos Aprendiendo Web
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API REST del proyecto educativo **Vamos Aprendiendo** (SENA).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+**Stack:** NestJS 11 · TypeScript 5.7 · Supabase (PostgreSQL + Auth) · Passport JWT · Swagger
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Requisitos previos
 
-## Project setup
+- Node.js >= 20
+- Cuenta y proyecto en [Supabase](https://supabase.com)
+- Backend corriendo esperado en el puerto `3000`
+
+---
+
+## Instalación
 
 ```bash
-$ npm install
+npm install
 ```
 
-## Compile and run the project
+---
+
+## Variables de entorno
+
+Copia el archivo de ejemplo y completa los valores:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+cp .env.example .env
 ```
 
-## Run tests
+Variables requeridas en `.env`:
+
+```env
+SUPABASE_URL=https://<tu-proyecto>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<tu-service-role-key>
+
+JWT_SECRET=<secreto-fuerte-aleatorio>
+JWT_EXPIRES_IN=15m
+
+JWT_REFRESH_SECRET=<otro-secreto-fuerte>
+JWT_REFRESH_EXPIRES_IN=7d
+
+PORT=3000
+```
+
+> [!CAUTION]
+> Nunca uses los valores por defecto (`default_secret_key_vamos_aprendiendo`) en un entorno que no sea puramente local de desarrollo.
+
+---
+
+## Scripts de ejecución
 
 ```bash
-# unit tests
-$ npm run test
+# Desarrollo con recarga automática
+npm run start:dev
 
-# e2e tests
-$ npm run test:e2e
+# Producción
+npm run start:prod
 
-# test coverage
-$ npm run test:cov
+# Build
+npm run build
 ```
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Tests
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# Unitarios
+npm run test
+
+# Unitarios en modo watch
+npm run test:watch
+
+# Con informe de cobertura
+npm run test:cov
+
+# End-to-End
+npm run test:e2e
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## API Docs (Swagger)
 
-Check out a few resources that may come in handy when working with NestJS:
+Con el servidor corriendo, accede a:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```
+http://localhost:3000/api/docs
+```
 
-## Support
+Soporta autenticación Bearer JWT directamente desde la UI.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## Prefijo global de rutas
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Todas las rutas tienen el prefijo `/api/v1`:
 
-## License
+```
+POST   /api/v1/auth/login
+POST   /api/v1/auth/register
+GET    /api/v1/admin/users
+GET    /api/v1/teacher/dashboard
+...
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+---
+
+## Módulos disponibles
+
+| Módulo | Ruta base | Descripción |
+|---|---|---|
+| `auth` | `/api/v1/auth` | Login, registro, OAuth, refresh tokens |
+| `admin` | `/api/v1/admin` | CRUD de usuarios (solo rol admin) |
+| `teacher` | `/api/v1/teacher` | Dashboard del docente e institución |
+| `students` | `/api/v1/students` | Setup de diagnóstico inicial del estudiante |
+| `presence` | `/api/v1/presence` | Heartbeat y presencia en tiempo real |
+| `telemetry` | `/api/v1/telemetry` | Telemetría del juego Unity (pendiente) |
+
+---
+
+## Base de datos
+
+Las migraciones SQL viven en `database/migrations/`. Deben ejecutarse en Supabase en orden cronológico.
+
+---
+
+## Documentación técnica
+
+- **Guía de desarrollo** (módulos, guards, DTOs): [`ARQUITECTURA.md`](./ARQUITECTURA.md)
+- **Historial de cambios**: [`CHANGELOG.md`](./CHANGELOG.md)
+- **Arquitectura completa del sistema**: [`../../docs/02-architecture.md`](../../docs/02-architecture.md)
+- **Flujos de autenticación**: [`../../docs/04-auth-flows.md`](../../docs/04-auth-flows.md)
+- **Esquema de base de datos**: [`../../docs/03-database-schema.md`](../../docs/03-database-schema.md)

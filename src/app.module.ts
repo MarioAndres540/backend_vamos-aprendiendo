@@ -1,4 +1,4 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
@@ -10,6 +10,9 @@ import { TeacherModule } from './modules/teacher/teacher.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { PresenceModule } from './modules/presence/presence.module';
 import { StudentsModule } from './modules/students/students.module';
+import { InstitutionsModule } from './modules/institutions/institutions.module';
+import { LicensesModule } from './modules/licenses/licenses.module';
+import { AssessmentsModule } from './modules/assessments/assessments.module';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { StudentsModule } from './modules/students/students.module';
     TeacherModule,
     PresenceModule,
     StudentsModule,
+    InstitutionsModule,
+    LicensesModule,
+    AssessmentsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -33,6 +39,4 @@ import { StudentsModule } from './modules/students/students.module';
     },
   ],
 })
-export class AppModule { }
-
-
+export class AppModule {}
