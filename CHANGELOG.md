@@ -7,6 +7,27 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### ⚙️ Nuevo — Configuración del tutor: perfil, hijos y diagnóstico por hijo (2026-10-25)
+- **Módulo `profile`** (`src/modules/profile/`, requiere JWT):
+  - `GET /profile/me`: nombres, apellidos, tipo y número de documento, teléfono y correo.
+  - `PATCH /profile/me`: cambia **teléfono** y/o **tipo de documento** (`UpdateMyProfileDto`). Nombres y número de documento no se cambian desde aquí.
+  - `PATCH /profile/me/email`: cambia el correo en Supabase Auth y en `profiles`. Pide la **contraseña actual** (`UpdateMyEmailDto`) para que nadie con la sesión abierta pueda apropiarse de la cuenta. Contraseña incorrecta → `400` (no `401`, que haría que el frontend intente renovar el token); correo de otra cuenta → `409`. Si falla `profiles`, se devuelve el correo anterior en Auth.
+- **Estudiantes**:
+  - `POST /students` (roles `usuario` y `test`): agrega un hijo o menor con los mismos datos y pasos del registro (estudiante, `tutor_students`, matrícula si tiene colegio, licencia de prueba de 14 días). Si algo falla se revierte; documento duplicado → `409`.
+  - `GET /students/:id`: información del hijo elegido en el menú del dashboard; `404` si no está vinculado a la cuenta (también para ids con formato inválido).
+  - `GET /students/mine` y `GET /students/:id` incluyen ahora `documentType` y `documentNumber`.
+  - El formulario guardado sin estudiante se asigna al hijo solo si la cuenta tiene **un único** hijo (antes `GET /students/:id` no lo distinguía).
+- **Seguridad en `POST /assessments`**: si llega `studentId`, se verifica que el estudiante esté vinculado al tutor en `tutor_students`; si no, `403`. Antes se podía guardar un formulario a nombre de cualquier estudiante.
+- Pruebas: `profile.service.spec.ts` (10), `students.service.spec.ts` (+5, total 12) y `assessments.service.spec.ts` (+2).
+
+### 👨‍👧 Nuevo — Hijos del tutor: `GET /students/mine` (2026-10-25)
+- Devuelve los estudiantes vinculados a la cuenta (`tutor_students`) con nombre, grado, edad, fecha de nacimiento, parentesco, colegio y su **último formulario inicial** (nivel de alerta, condición principal y respuestas por dimensión). Requiere JWT.
+- Lo usa la tarjeta "Tutor de" del dashboard y lo puede usar la app de Unity para saber qué `studentId` enviar al abrir la sesión.
+- Los formularios de niños se guardan hoy sin `student_id` (el de Matías está así). Si el tutor tiene **un solo hijo**, ese formulario se le asigna; con varios hijos no se asigna porque no se sabe de quién es.
+- Si fallan las consultas de colegios o formularios, la respuesta sale igual, sin esos datos (queda en el log). Si fallan los vínculos o los estudiantes, responde 500 con un mensaje genérico.
+- Pruebas: `students.service.spec.ts` (7 casos). Las filas de Supabase se tipan con interfaces locales (`TutorLinkRow`, `StudentRow`, `InstitutionRow`, `AssessmentRow`), igual que en `PresenceService`; `students.service.ts` pasa ESLint sin errores.
+- Prettier se aplicó a `students.service.ts` y `students.controller.ts`, así que también cambió la indentación del código anterior (`saveSetup`, `getSetupStatus`), sin cambios de lógica.
+
 ### 📡 Nuevo — Canal Unity ↔ Backend ↔ Web: sesiones de uso de la app
 - **Objetivo**: el tutor (o el adulto) ve en su dashboard si la app de Unity está en uso: desde qué hora y cuánto tiempo lleva, o cuándo se desconectó y cuánto duró la última sesión.
 - **Migración** `database/migrations/20261008_app_sessions.sql`: tabla `app_sessions` con una fila por sesión de uso. Columnas: `user_id`, `student_id`, `client` (`unity` | `web`), `device_info`, `app_version`, `started_at`, `last_heartbeat_at`, `ended_at` y `end_reason` (`app_closed` | `logout` | `timeout`). Reemplaza a `user_presence` (una sola fila por usuario y sin historial), que deja de usarse.
@@ -139,6 +160,7 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
      - Definir cómo la app sabe con qué hijo se juega cuando el tutor tiene varios (ej. selector de hijo tras el login, con un endpoint que liste los hijos del tutor).
      - Exponer los endpoints de telemetría que la app necesite (pendiente #1).
 7. ✅ **Presencia en línea con varios dispositivos**: resuelto con `app_sessions` (una fila por sesión y por cliente). Ver `[Unreleased]`.
-8. **Endpoint para que Unity liste los hijos del tutor**: la app necesita saber qué hijos tiene la cuenta para enviar `studentId` al abrir la sesión (y, más adelante, en la telemetría). Ej.: `GET /students/mine` con id, nombre, grado y edad de los estudiantes vinculados en `tutor_students`.
+8. ✅ **Endpoint para que Unity liste los hijos del tutor**: `GET /students/mine` (ver `[Unreleased]`). Falta que la app de Unity lo consuma.
+   - ✅ (2026-10-25) El formulario de un hijo agregado desde Configuración ya se guarda con su `studentId`. Sigue pendiente: el formulario del **registro** (primer inicio de sesión) se guarda sin `studentId`; con varios hijos registrados de una vez no se sabe de cuál es.
 9. **Integración de la app de Unity** con `docs/unity-app-sessions.md`: implementar el servicio de sesiones en Unity y probar el flujo completo con el dashboard del tutor.
 6. **Refresco de token y tipo de perfil**: `POST /auth/refresh` no devuelve `profileType`; el frontend conserva el valor del login en la cookie `profile_type`. Si un admin cambia el rol de un usuario, el cambio solo se refleja en su siguiente inicio de sesión.

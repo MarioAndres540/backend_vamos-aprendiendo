@@ -13,6 +13,7 @@ import { StudentsModule } from './modules/students/students.module';
 import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { LicensesModule } from './modules/licenses/licenses.module';
 import { AssessmentsModule } from './modules/assessments/assessments.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AssessmentsModule } from './modules/assessments/assessments.module';
     InstitutionsModule,
     LicensesModule,
     AssessmentsModule,
+    ProfileModule,
   ],
   controllers: [AppController],
   providers: [

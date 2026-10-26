@@ -20,7 +20,10 @@ export class CreateStudentSetupDto {
   mode: 'kids' | 'adults';
 
   // Kids fields
-  @ApiPropertyOptional({ description: 'Super poder del nino', example: 'letras' })
+  @ApiPropertyOptional({
+    description: 'Super poder del nino',
+    example: 'letras',
+  })
   @IsOptional()
   @IsString()
   superPower?: string;
@@ -30,7 +33,11 @@ export class CreateStudentSetupDto {
   @IsString()
   chosenRealm?: string;
 
-  @ApiPropertyOptional({ description: 'Nivel de autoeficacia (1-3)', minimum: 1, maximum: 3 })
+  @ApiPropertyOptional({
+    description: 'Nivel de autoeficacia (1-3)',
+    minimum: 1,
+    maximum: 3,
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -44,12 +51,18 @@ export class CreateStudentSetupDto {
   playStyles?: string[];
 
   // Adults fields
-  @ApiPropertyOptional({ description: 'Meta cognitiva del adulto', example: 'memoria' })
+  @ApiPropertyOptional({
+    description: 'Meta cognitiva del adulto',
+    example: 'memoria',
+  })
   @IsOptional()
   @IsString()
   cognitiveGoal?: string;
 
-  @ApiPropertyOptional({ description: 'Estilo de aprendizaje', example: 'visual' })
+  @ApiPropertyOptional({
+    description: 'Estilo de aprendizaje',
+    example: 'visual',
+  })
   @IsOptional()
   @IsString()
   learningStyle?: string;

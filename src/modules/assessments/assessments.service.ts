@@ -1,6 +1,13 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { SubmitAssessmentDto, AssessmentTarget } from './dto/submit-assessment.dto';
+import {
+  SubmitAssessmentDto,
+  AssessmentTarget,
+} from './dto/submit-assessment.dto';
 
 export interface AssessmentResult {
   id: string;
@@ -21,8 +28,32 @@ export class AssessmentsService {
    * Procesa las respuestas del formulario inicial, calcula el score ponderado,
    * asigna el nivel de riesgo/área y marca has_completed_setup = true.
    */
-  async submitAssessment(evaluatorUserId: string, dto: SubmitAssessmentDto): Promise<AssessmentResult> {
+  async submitAssessment(
+    evaluatorUserId: string,
+    dto: SubmitAssessmentDto,
+  ): Promise<AssessmentResult> {
     const supabase = this.supabaseService.getClient();
+
+    // 0. Un formulario de un estudiante solo lo puede llenar su tutor
+    if (dto.studentId) {
+      const { data: link, error: linkError } = await supabase
+        .from('tutor_students')
+        .select('id')
+        .eq('tutor_profile_id', evaluatorUserId)
+        .eq('student_id', dto.studentId)
+        .maybeSingle();
+
+      if (linkError) {
+        throw new InternalServerErrorException(
+          'No pudimos verificar el estudiante. Intenta de nuevo.',
+        );
+      }
+      if (!link) {
+        throw new ForbiddenException(
+          'Este estudiante no está vinculado a tu cuenta.',
+        );
+      }
+    }
 
     // 1. Calcular puntuación total
     const totalScore = dto.answers.reduce((sum, item) => sum + item.score, 0);
@@ -31,7 +62,8 @@ export class AssessmentsService {
     // 2. Determinar dimensión con mayor puntaje acumulado
     const dimensionScores: Record<string, number> = {};
     for (const ans of dto.answers) {
-      dimensionScores[ans.dimension] = (dimensionScores[ans.dimension] || 0) + ans.score;
+      dimensionScores[ans.dimension] =
+        (dimensionScores[ans.dimension] || 0) + ans.score;
     }
 
     let primaryCondition = 'general';
@@ -50,7 +82,8 @@ export class AssessmentsService {
     if (dto.targetType === AssessmentTarget.NINO) {
       if (totalScore <= 15) {
         riskLevel = 'bajo';
-        recommendations = 'Perfil de aprendizaje típico. Ruta recomendada: Estimulación lúdica integral y retos progresivos.';
+        recommendations =
+          'Perfil de aprendizaje típico. Ruta recomendada: Estimulación lúdica integral y retos progresivos.';
       } else if (totalScore <= 25) {
         riskLevel = 'moderado';
         recommendations = `Alerta moderada detectada en el área de ${primaryCondition}. Ruta recomendada: Refuerzo guiado y ejercicios adaptativos.`;
@@ -62,7 +95,8 @@ export class AssessmentsService {
       // ADULTO
       if (totalScore <= 12) {
         riskLevel = 'bajo';
-        recommendations = 'Rendimiento cognitivo óptimo. Ruta recomendada: Gimnasia mental diaria, agilidad y razonamiento.';
+        recommendations =
+          'Rendimiento cognitivo óptimo. Ruta recomendada: Gimnasia mental diaria, agilidad y razonamiento.';
       } else if (totalScore <= 22) {
         riskLevel = 'moderado';
         recommendations = `Signos de desgaste leve en ${primaryCondition}. Ruta recomendada: Ejercicios de neuroprotección y memoria activa.`;
@@ -98,7 +132,10 @@ export class AssessmentsService {
     // 5. Actualizar has_completed_setup = true en el perfil del evaluador
     const { error: profileError } = await supabase
       .from('profiles')
-      .update({ has_completed_setup: true, updated_at: new Date().toISOString() })
+      .update({
+        has_completed_setup: true,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', evaluatorUserId);
 
     if (profileError) {
@@ -139,7 +176,9 @@ export class AssessmentsService {
     const { data, error } = await query;
 
     if (error) {
-      throw new InternalServerErrorException(`Error al consultar historial: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Error al consultar historial: ${error.message}`,
+      );
     }
 
     return data || [];
