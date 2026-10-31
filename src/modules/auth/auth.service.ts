@@ -20,6 +20,22 @@ import * as crypto from 'crypto';
 /** Tipo de perfil usado por el frontend para decidir el destino después del login */
 export type ProfileType = 'admin' | 'profesor' | 'tester' | 'tutor' | 'adulto';
 
+/** Público del contenido de la app de Unity: el tutor juega con sus hijos (niños), el adulto para sí mismo */
+export type Audience = 'ninos' | 'adultos';
+
+/**
+ * Público según el tipo de perfil. null: el tester elige la versión (como en el formulario inicial)
+ * y profesor / admin no tienen contenido de juego.
+ */
+export const audienceForProfile = (
+  profileType: ProfileType,
+): Audience | null =>
+  profileType === 'tutor'
+    ? 'ninos'
+    : profileType === 'adulto'
+      ? 'adultos'
+      : null;
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -394,8 +410,9 @@ export class AuthService {
     // Calcular estado de licencia activa
     const licenseInfo = await this.resolveActiveLicense(data.user.id);
 
-    // Tipo de perfil: define a dónde se envía al usuario después del login
+    // Tipo de perfil: define a dónde se envía al usuario después del login (web) y qué contenido ve (Unity)
     const profileType = await this.resolveProfileType(data.user.id, role);
+    const audience = audienceForProfile(profileType);
 
     const tokenPair = await this.generateTokenPair(
       data.user.id,
@@ -408,8 +425,9 @@ export class AuthService {
 
     return {
       ...tokenPair,
-      user: { ...tokenPair.user, profileType },
+      user: { ...tokenPair.user, profileType, audience },
       profileType,
+      audience,
       license: licenseInfo,
       profile: {
         firstName: profile.first_name,
@@ -564,7 +582,7 @@ export class AuthService {
     const hasCompletedSetup = profile ? profile.has_completed_setup === true : false;
 
     // El token nuevo continúa la misma sesión (mismo dispositivo)
-    return await this.generateTokenPair(
+    const tokenPair = await this.generateTokenPair(
       payload.sub,
       payload.email,
       currentRole,
@@ -573,6 +591,18 @@ export class AuthService {
       hasCompletedSetup,
       sessionId ?? undefined,
     );
+
+    // Se recalculan en cada renovación: la app de Unity los recupera al reabrir con el token guardado,
+    // y un cambio de rol (o un hijo agregado) se refleja sin volver a iniciar sesión
+    const profileType = await this.resolveProfileType(payload.sub, currentRole);
+    const audience = audienceForProfile(profileType);
+
+    return {
+      ...tokenPair,
+      user: { ...tokenPair.user, profileType, audience },
+      profileType,
+      audience,
+    };
   }
 
   async logout(userId: string, refreshToken: string) {

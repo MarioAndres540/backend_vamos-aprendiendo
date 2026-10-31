@@ -36,23 +36,7 @@ export class AssessmentsService {
 
     // 0. Un formulario de un estudiante solo lo puede llenar su tutor
     if (dto.studentId) {
-      const { data: link, error: linkError } = await supabase
-        .from('tutor_students')
-        .select('id')
-        .eq('tutor_profile_id', evaluatorUserId)
-        .eq('student_id', dto.studentId)
-        .maybeSingle();
-
-      if (linkError) {
-        throw new InternalServerErrorException(
-          'No pudimos verificar el estudiante. Intenta de nuevo.',
-        );
-      }
-      if (!link) {
-        throw new ForbiddenException(
-          'Este estudiante no está vinculado a tu cuenta.',
-        );
-      }
+      await this.assertStudentLinked(evaluatorUserId, dto.studentId);
     }
 
     // 1. Calcular puntuación total
@@ -162,6 +146,11 @@ export class AssessmentsService {
   async getHistory(userId: string, studentId?: string) {
     const supabase = this.supabaseService.getClient();
 
+    // El historial de un estudiante solo lo ve su tutor (antes se podía consultar el de cualquiera)
+    if (studentId) {
+      await this.assertStudentLinked(userId, studentId);
+    }
+
     let query = supabase
       .from('initial_assessments')
       .select('*')
@@ -182,5 +171,29 @@ export class AssessmentsService {
     }
 
     return data || [];
+  }
+
+  /**
+   * Responde 403 si el estudiante no está vinculado al tutor en tutor_students
+   */
+  private async assertStudentLinked(userId: string, studentId: string) {
+    const { data: link, error } = await this.supabaseService
+      .getClient()
+      .from('tutor_students')
+      .select('id')
+      .eq('tutor_profile_id', userId)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(
+        'No pudimos verificar el estudiante. Intenta de nuevo.',
+      );
+    }
+    if (!link) {
+      throw new ForbiddenException(
+        'Este estudiante no está vinculado a tu cuenta.',
+      );
+    }
   }
 }

@@ -219,4 +219,68 @@ describe('PresenceService (sesiones de la app de Unity)', () => {
       expect(status.lastSession).toMatchObject({ endedAt, endReason: 'app_closed', durationSeconds: 3600 });
     });
   });
+
+  describe('getHistory (pestaña Analíticas)', () => {
+    // 26 oct 2026, 10:00 a. m. en Colombia
+    beforeEach(() => jest.useFakeTimers({ now: new Date('2026-10-26T15:00:00Z'), doNotFake: ['nextTick', 'setImmediate'] }));
+    afterEach(() => jest.useRealTimers());
+
+    it('resume las sesiones del periodo y las agrupa por día en hora de Colombia', async () => {
+      const mock = setup({
+        'app_sessions:select': [
+          { data: [], error: null }, // sesiones inactivas por cerrar
+          {
+            data: [
+              // 8 oct 1:38 a. m. en Colombia (6:38 UTC): cuenta el 8 de octubre, no el 7
+              { id: 's2', student_id: null, started_at: '2026-10-08T06:38:43Z', ended_at: '2026-10-08T06:39:25Z', end_reason: 'logout' },
+              { id: 's1', student_id: 'nino-1', started_at: '2026-10-08T06:35:35Z', ended_at: '2026-10-08T06:36:41Z', end_reason: 'app_closed', students: { first_name: 'Matías', last_name: 'Villegas' } },
+            ],
+            error: null,
+          },
+        ],
+      });
+
+      const history = await service.getHistory('tutor-1', 30);
+
+      expect(history.summary).toEqual({
+        sessionsCount: 2,
+        totalSeconds: 42 + 66,
+        averageSeconds: 54,
+        longestSeconds: 66,
+        lastStartedAt: '2026-10-08T06:38:43Z',
+      });
+      expect(history.daily).toHaveLength(30);
+      expect(history.daily[0].date).toBe('2026-09-27');
+      expect(history.daily[29].date).toBe('2026-10-26');
+      expect(history.daily.find((d) => d.date === '2026-10-08')).toEqual({ date: '2026-10-08', seconds: 108, sessionsCount: 2 });
+      expect(history.sessions[1].student).toEqual({ id: 'nino-1', firstName: 'Matías', lastName: 'Villegas' });
+      // Desde el inicio del 27 sep en Colombia (05:00 UTC)
+      const query = mock.calls.filter((c) => c.table === 'app_sessions' && c.op === 'select')[1];
+      expect(query.filters).toContainEqual(['gte', 'started_at', '2026-09-27T05:00:00.000Z']);
+    });
+
+    it('una sesión abierta cuenta hasta ahora', async () => {
+      setup({
+        'app_sessions:select': [
+          { data: [], error: null },
+          { data: [{ id: 's3', student_id: null, started_at: '2026-10-26T14:50:00Z', ended_at: null, end_reason: null }], error: null },
+        ],
+      });
+
+      const history = await service.getHistory('tutor-1', 7);
+
+      expect(history.sessions[0]).toMatchObject({ isOpen: true, durationSeconds: 600 });
+      expect(history.daily).toHaveLength(7);
+      expect(history.daily[6]).toEqual({ date: '2026-10-26', seconds: 600, sessionsCount: 1 });
+    });
+
+    it('sin sesiones devuelve el resumen en cero', async () => {
+      setup({ 'app_sessions:select': [{ data: [], error: null }, { data: [], error: null }] });
+
+      const history = await service.getHistory('tutor-1', 7);
+
+      expect(history.summary).toEqual({ sessionsCount: 0, totalSeconds: 0, averageSeconds: 0, longestSeconds: 0, lastStartedAt: null });
+      expect(history.daily.every((d) => d.seconds === 0)).toBe(true);
+    });
+  });
 });

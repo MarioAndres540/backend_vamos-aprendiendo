@@ -7,7 +7,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { AppSessionClient, StartAppSessionDto } from './dto/start-app-session.dto';
+import {
+  AppSessionClient,
+  StartAppSessionDto,
+} from './dto/start-app-session.dto';
 import { ClientEndReason } from './dto/end-app-session.dto';
 
 // La app envía un latido cada 15 s; tras 45 s sin latidos (3 perdidos) la sesión se cierra por inactividad
@@ -16,6 +19,10 @@ export const SESSION_TIMEOUT_SECONDS = 45;
 
 // Inicio del día en Colombia (UTC-5, sin horario de verano) para el resumen "hoy"
 const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Tope de sesiones que devuelve el historial (Analíticas)
+export const HISTORY_SESSIONS_LIMIT = 500;
 
 type EndReason = ClientEndReason | 'timeout';
 
@@ -42,7 +49,10 @@ const SESSION_COLUMNS =
   'id, user_id, student_id, client, device_info, started_at, last_heartbeat_at, ended_at, end_reason, students(first_name, last_name)';
 
 const secondsBetween = (from: string, to: string | Date) =>
-  Math.max(0, Math.floor((new Date(to).getTime() - new Date(from).getTime()) / 1000));
+  Math.max(
+    0,
+    Math.floor((new Date(to).getTime() - new Date(from).getTime()) / 1000),
+  );
 
 @Injectable()
 export class PresenceService {
@@ -68,7 +78,9 @@ export class PresenceService {
 
       if (error) this.fail('validar el estudiante', error);
       if (!count) {
-        throw new BadRequestException('El estudiante no está vinculado a tu cuenta.');
+        throw new BadRequestException(
+          'El estudiante no está vinculado a tu cuenta.',
+        );
       }
     }
 
@@ -102,7 +114,10 @@ export class PresenceService {
     const session = await this.findOwnSession(userId, sessionId);
     const now = new Date();
 
-    if (!session.ended_at && secondsBetween(session.last_heartbeat_at, now) > SESSION_TIMEOUT_SECONDS) {
+    if (
+      !session.ended_at &&
+      secondsBetween(session.last_heartbeat_at, now) > SESSION_TIMEOUT_SECONDS
+    ) {
       await this.closeSession(session.id, session.last_heartbeat_at, 'timeout');
       session.ended_at = session.last_heartbeat_at;
     }
@@ -128,7 +143,11 @@ export class PresenceService {
   }
 
   /** Cierra la sesión (la app se cerró o el usuario cerró sesión). Es idempotente. */
-  async endSession(userId: string, sessionId: string, reason: ClientEndReason = 'app_closed') {
+  async endSession(
+    userId: string,
+    sessionId: string,
+    reason: ClientEndReason = 'app_closed',
+  ) {
     const session = await this.findOwnSession(userId, sessionId);
 
     if (!session.ended_at) {
@@ -188,12 +207,16 @@ export class PresenceService {
     ]);
 
     for (const result of [openResult, lastResult, todayResult]) {
-      if (result.error) this.fail('consultar el estado de la app', result.error);
+      if (result.error)
+        this.fail('consultar el estado de la app', result.error);
     }
 
     const open = openResult.data as AppSessionRow | null;
     const last = lastResult.data as AppSessionRow | null;
-    const todaySessions = (todayResult.data ?? []) as Pick<AppSessionRow, 'started_at' | 'last_heartbeat_at' | 'ended_at'>[];
+    const todaySessions = (todayResult.data ?? []) as Pick<
+      AppSessionRow,
+      'started_at' | 'last_heartbeat_at' | 'ended_at'
+    >[];
 
     return {
       client,
@@ -216,7 +239,10 @@ export class PresenceService {
             sessionId: last.id,
             startedAt: last.started_at,
             endedAt: last.ended_at,
-            durationSeconds: secondsBetween(last.started_at, last.ended_at as string),
+            durationSeconds: secondsBetween(
+              last.started_at,
+              last.ended_at as string,
+            ),
             endReason: last.end_reason,
             deviceInfo: last.device_info,
             student: this.mapStudent(last),
@@ -232,11 +258,95 @@ export class PresenceService {
     };
   }
 
+  /**
+   * Historial de uso de la app para la pestaña Analíticas: sesiones de los últimos `days` días (contando hoy,
+   * en hora de Colombia), resumen y segundos por día. Una sesión cuenta en el día en que empezó.
+   */
+  async getHistory(
+    userId: string,
+    days = 30,
+    client: AppSessionClient = 'unity',
+  ) {
+    await this.closeStaleSessions(userId, client);
+    const now = new Date();
+    const since = new Date(
+      this.startOfTodayColombia(now).getTime() - (days - 1) * DAY_MS,
+    );
+
+    const { data, error } = await this.supabaseService
+      .getClient()
+      .from('app_sessions')
+      .select(SESSION_COLUMNS)
+      .eq('user_id', userId)
+      .eq('client', client)
+      .gte('started_at', since.toISOString())
+      .order('started_at', { ascending: false })
+      .limit(HISTORY_SESSIONS_LIMIT);
+
+    if (error) this.fail('consultar el historial de la app', error);
+
+    const sessions = ((data ?? []) as unknown as AppSessionRow[]).map(
+      (row) => ({
+        sessionId: row.id,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        // Una sesión abierta cuenta hasta ahora
+        durationSeconds: secondsBetween(row.started_at, row.ended_at ?? now),
+        endReason: row.end_reason,
+        isOpen: !row.ended_at,
+        student: this.mapStudent(row),
+      }),
+    );
+
+    const totalSeconds = sessions.reduce(
+      (total, s) => total + s.durationSeconds,
+      0,
+    );
+
+    const daily = Array.from({ length: days }, (_, i) => ({
+      date: this.colombiaDateKey(new Date(since.getTime() + i * DAY_MS)),
+      seconds: 0,
+      sessionsCount: 0,
+    }));
+    const byDate = new Map(daily.map((day) => [day.date, day]));
+    for (const session of sessions) {
+      const day = byDate.get(this.colombiaDateKey(new Date(session.startedAt)));
+      if (day) {
+        day.seconds += session.durationSeconds;
+        day.sessionsCount += 1;
+      }
+    }
+
+    return {
+      client,
+      days,
+      from: since.toISOString(),
+      to: now.toISOString(),
+      summary: {
+        sessionsCount: sessions.length,
+        totalSeconds,
+        averageSeconds: sessions.length
+          ? Math.round(totalSeconds / sessions.length)
+          : 0,
+        longestSeconds: sessions.reduce(
+          (max, s) => Math.max(max, s.durationSeconds),
+          0,
+        ),
+        lastStartedAt: sessions[0]?.startedAt ?? null,
+      },
+      daily,
+      sessions,
+    };
+  }
+
   // ==========================================
   // HELPERS
   // ==========================================
 
-  private async findOwnSession(userId: string, sessionId: string): Promise<AppSessionRow> {
+  private async findOwnSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<AppSessionRow> {
     const { data, error } = await this.supabaseService
       .getClient()
       .from('app_sessions')
@@ -260,7 +370,9 @@ export class PresenceService {
   /** Cierra por inactividad las sesiones abiertas sin latidos; la hora de fin es la del último latido. */
   private async closeStaleSessions(userId: string, client: AppSessionClient) {
     const supabase = this.supabaseService.getClient();
-    const limit = new Date(Date.now() - SESSION_TIMEOUT_SECONDS * 1000).toISOString();
+    const limit = new Date(
+      Date.now() - SESSION_TIMEOUT_SECONDS * 1000,
+    ).toISOString();
 
     const { data, error } = await supabase
       .from('app_sessions')
@@ -277,7 +389,11 @@ export class PresenceService {
     }
   }
 
-  private async closeSession(sessionId: string, endedAt: string, reason: EndReason) {
+  private async closeSession(
+    sessionId: string,
+    endedAt: string,
+    reason: EndReason,
+  ) {
     const { error } = await this.supabaseService
       .getClient()
       .from('app_sessions')
@@ -289,9 +405,15 @@ export class PresenceService {
   }
 
   private mapStudent(row: AppSessionRow) {
-    const student = Array.isArray(row.students) ? row.students[0] : row.students;
+    const student = Array.isArray(row.students)
+      ? row.students[0]
+      : row.students;
     if (!row.student_id || !student) return null;
-    return { id: row.student_id, firstName: student.first_name, lastName: student.last_name };
+    return {
+      id: row.student_id,
+      firstName: student.first_name,
+      lastName: student.last_name,
+    };
   }
 
   private startOfTodayColombia(now: Date) {
@@ -300,8 +422,22 @@ export class PresenceService {
     return new Date(local.getTime() - COLOMBIA_OFFSET_MS);
   }
 
-  private fail(action: string, error: { message?: string; code?: string } | null): never {
-    this.logger.error(`Error al ${action}: ${error?.code ?? ''} ${error?.message ?? 'sin detalle'}`);
-    throw new InternalServerErrorException(`No pudimos ${action}. Intenta de nuevo en unos minutos.`);
+  /** Fecha YYYY-MM-DD en hora de Colombia */
+  private colombiaDateKey(date: Date) {
+    return new Date(date.getTime() + COLOMBIA_OFFSET_MS)
+      .toISOString()
+      .slice(0, 10);
+  }
+
+  private fail(
+    action: string,
+    error: { message?: string; code?: string } | null,
+  ): never {
+    this.logger.error(
+      `Error al ${action}: ${error?.code ?? ''} ${error?.message ?? 'sin detalle'}`,
+    );
+    throw new InternalServerErrorException(
+      `No pudimos ${action}. Intenta de nuevo en unos minutos.`,
+    );
   }
 }

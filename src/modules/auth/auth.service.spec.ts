@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, InternalServerErrorException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { AuthService } from './auth.service';
+import { AuthService, audienceForProfile } from './auth.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PublicRegistrationRole, RegisterDto } from './dto/register.dto';
 import { Role } from '../../common/enums/role.enum';
@@ -219,6 +219,58 @@ describe('AuthService - register', () => {
     it('si la consulta falla, no bloquea el login y lo trata como adulto', async () => {
       await setup({ 'tutor_students:select': { data: null, error: { message: 'timeout' } } });
       await expect(service.resolveProfileType('user-1', Role.USER)).resolves.toBe('adulto');
+    });
+  });
+
+  describe('público de la app de Unity (audience)', () => {
+    it.each([
+      ['tutor', 'ninos'],
+      ['adulto', 'adultos'],
+      ['tester', null],
+      ['profesor', null],
+      ['admin', null],
+    ] as const)('el perfil %s corresponde al público %s', (profileType, expected) => {
+      expect(audienceForProfile(profileType)).toBe(expected);
+    });
+
+    it('el login informa el tipo de perfil y el público (tutor → niños)', async () => {
+      await setup({
+        'profiles:select': {
+          data: { role: Role.USER, trial_ends_at: null, is_active: true, has_completed_setup: true, first_name: 'Marisol', last_name: 'Villegas', institution_id: null },
+          error: null,
+        },
+        'tutor_students:select': { data: null, error: null, count: 1 } as QueryResult,
+      });
+      supabaseServiceMock.createAuthClient.mockReturnValue({
+        auth: {
+          signInWithPassword: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1', email: 'tutor@ejemplo.com' } }, error: null }),
+        },
+      });
+
+      const response = await service.login({ email: 'tutor@ejemplo.com', password: 'Clave123.' });
+
+      expect(response).toMatchObject({ profileType: 'tutor', audience: 'ninos' });
+      expect(response.user).toMatchObject({ profileType: 'tutor', audience: 'ninos' });
+    });
+
+    it('al renovar la sesión devuelve de nuevo el tipo de perfil y el público (adulto → adultos)', async () => {
+      await setup({
+        'refresh_tokens:select': {
+          data: { id: 'rt-3', is_revoked: false, session_id: 'sesion-unity', expires_at: new Date(Date.now() + 3600_000).toISOString() },
+          error: null,
+        },
+        'profiles:select': {
+          data: { role: Role.USER, trial_ends_at: null, is_active: true, has_completed_setup: true },
+          error: null,
+        },
+        'tutor_students:select': { data: null, error: null, count: 0 } as QueryResult,
+      });
+
+      const response = await service.refreshTokens('token-valido');
+
+      expect(response).toMatchObject({ profileType: 'adulto', audience: 'adultos' });
+      expect(response.user).toMatchObject({ profileType: 'adulto', audience: 'adultos' });
+      expect(response.accessToken).toBe('signed-token');
     });
   });
 

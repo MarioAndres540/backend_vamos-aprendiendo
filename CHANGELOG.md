@@ -7,6 +7,36 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### 🎮 Nuevo — Contenido de niños o de adultos para la app de Unity (2026-10-29)
+- **`audience`** en `POST /auth/login` (en la raíz y en `user`): `ninos` para el tutor, `adultos` para el adulto y `null` para tester, profesor y admin (`audienceForProfile` en `auth.service.ts`). Antes la app solo recibía `profileType` y tenía que deducirlo.
+- **`POST /auth/refresh` devuelve también `profileType` y `audience`** (recalculados en cada renovación). La app de Unity los necesita al reabrir con el token guardado, porque no repite el login. También sirve para que un cambio de rol o un hijo agregado se reflejen sin volver a iniciar sesión. Resuelve el pendiente #6.
+- Guía `docs/unity-app-sessions.md` actualizada: tabla `profileType` → `audience`, respuesta de `/auth/refresh` y nueva sección 3.4 `GET /students/mine` para elegir el hijo.
+- Verificado con la cuenta de prueba en una instancia temporal: login y refresh devuelven `tutor` / `ninos`.
+- Pruebas: `auth.service.spec.ts` (+7, total 23). Suite completa: 100 pruebas.
+- **Requiere reiniciar el backend.**
+
+### 📊 Nuevo — Datos para Actividades y Analíticas (2026-10-26)
+- **`GET /presence/history?days=30`** (`PresenceService.getHistory`): historial de uso de la app de Unity de la cuenta, de los últimos `days` días contando hoy (1 a 365, en hora de Colombia). Devuelve:
+  - `summary`: sesiones, tiempo total, promedio, la más larga y el último ingreso.
+  - `daily`: segundos y sesiones por día. Una sesión cuenta en el día en que empezó; una sesión abierta cuenta hasta ahora.
+  - `sessions`: hasta 500 sesiones, con duración, motivo de cierre y estudiante.
+  - DTO `QueryAppHistoryDto`.
+- **Módulo `telemetry` implementado** (antes los archivos estaban vacíos), solo lectura:
+  - `GET /telemetry/progress?studentId=`: las 7 categorías de `categorias_cognitivas` unidas con `progreso_categoria` (nivel, puntos, meta, si ya se jugó).
+  - `GET /telemetry/performance?studentId=&days=30`:
+    - Promedios de `trazos` (precisión y tiempo en números, precisión en letras) y de `operaciones_resueltas` (tiempo y % correctas).
+    - Rangos esperados de `rangos_desarrollo` para la edad del estudiante (o del adulto), y un estado: `within` / `below` / `above`.
+    - Cantidad de `game_sessions` y hasta 5 avisos de `trazos.desviaciones.alerta`.
+  - Con `studentId` verifica el vínculo en `tutor_students` (`403` si no es de la cuenta); sin él usa los datos propios del usuario (`estudiante_id` vacío).
+  - Pendiente: los endpoints de **escritura** para que Unity guarde sesiones de juego, trazos y progreso (DTOs `create-game-session.dto.ts` y `stroke-point.dto.ts` siguen vacíos).
+- Verificado con la cuenta de prueba en una instancia temporal: historial real (7 sesiones del 8 oct, 2 min 44 s), progreso en nivel 1 sin jugar, rangos de 7 años; `403` con estudiante ajeno, `400` con parámetros inválidos, `401` sin sesión.
+- Pruebas: `telemetry.service.spec.ts` (7) y `presence.service.spec.ts` (+3, total 13). Suite completa: 93 pruebas.
+
+### 🔒 Corregido — Historial de formularios de otro estudiante (2026-10-26)
+- `GET /assessments/history?studentId=…` devolvía el historial de **cualquier** estudiante. Ahora verifica que esté vinculado al tutor en `tutor_students` y, si no, responde `403`. Sin `studentId` sigue devolviendo los formularios que llenó el propio usuario. Lo usa la nueva pestaña Diagnósticos.
+- La verificación es un método privado (`assertStudentLinked`) que también usa `POST /assessments`.
+- Pruebas: `assessments.service.spec.ts` (+3, total 7).
+
 ### ⚙️ Nuevo — Configuración del tutor: perfil, hijos y diagnóstico por hijo (2026-10-25)
 - **Módulo `profile`** (`src/modules/profile/`, requiere JWT):
   - `GET /profile/me`: nombres, apellidos, tipo y número de documento, teléfono y correo.
@@ -163,4 +193,4 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 8. ✅ **Endpoint para que Unity liste los hijos del tutor**: `GET /students/mine` (ver `[Unreleased]`). Falta que la app de Unity lo consuma.
    - ✅ (2026-10-25) El formulario de un hijo agregado desde Configuración ya se guarda con su `studentId`. Sigue pendiente: el formulario del **registro** (primer inicio de sesión) se guarda sin `studentId`; con varios hijos registrados de una vez no se sabe de cuál es.
 9. **Integración de la app de Unity** con `docs/unity-app-sessions.md`: implementar el servicio de sesiones en Unity y probar el flujo completo con el dashboard del tutor.
-6. **Refresco de token y tipo de perfil**: `POST /auth/refresh` no devuelve `profileType`; el frontend conserva el valor del login en la cookie `profile_type`. Si un admin cambia el rol de un usuario, el cambio solo se refleja en su siguiente inicio de sesión.
+6. ✅ **Refresco de token y tipo de perfil** (2026-10-29): `POST /auth/refresh` devuelve `profileType` y `audience`; la web actualiza la cookie `profile_type` y Unity su `PlayerSession`.

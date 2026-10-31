@@ -14,6 +14,7 @@ import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { LicensesModule } from './modules/licenses/licenses.module';
 import { AssessmentsModule } from './modules/assessments/assessments.module';
 import { ProfileModule } from './modules/profile/profile.module';
+import { TelemetryModule } from './modules/telemetry/telemetry.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ProfileModule } from './modules/profile/profile.module';
     LicensesModule,
     AssessmentsModule,
     ProfileModule,
+    TelemetryModule,
   ],
   controllers: [AppController],
   providers: [

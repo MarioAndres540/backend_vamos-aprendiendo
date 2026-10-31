@@ -50,20 +50,33 @@ App vuelve a primer plano      ──► POST /presence/sessions             (se
   "refreshToken": "eyJ...",         // vence en 7 días; guardarlo de forma segura
   "expiresIn": 900,
   "profileType": "tutor",           // tutor | adulto | tester | profesor | admin
-  "user": { "id": "uuid", "email": "tutor@correo.com", "role": "usuario", "hasCompletedSetup": true },
+  "audience": "ninos",              // ninos | adultos | null (ver tabla)
+  "user": { "id": "uuid", "email": "tutor@correo.com", "role": "usuario", "hasCompletedSetup": true, "profileType": "tutor", "audience": "ninos" },
   "profile": { "firstName": "Marisol", "lastName": "Villegas" }
 }
 ```
 
 Errores: `401` credenciales inválidas o cuenta desactivada.
 
+**Contenido de niños o de adultos (`audience`)**: la app decide qué contenido mostrar con este campo.
+
+| `profileType` | `audience` | Qué hace la app |
+|---|---|---|
+| `tutor` | `ninos` | Contenido de niños. El niño juega con la cuenta del tutor: elegir el hijo con `GET /students/mine` (sección 3.4) y enviarlo como `studentId`. |
+| `adulto` | `adultos` | Contenido de adultos (memoria, retentiva, prevención). Sin `studentId`. |
+| `tester` | `null` | Cuentas de prueba: la app deja elegir la versión (niños o adultos). |
+| `profesor` / `admin` | `null` | Sin contenido de juego definido. |
+
 ### `POST /auth/refresh`
 
 ```json
 // Petición
 { "refreshToken": "eyJ..." }
-// Respuesta 200: mismo formato de tokens que el login (sin profileType)
+// Respuesta 200: tokens nuevos + profileType y audience recalculados (mismo formato que el login, sin profile)
+{ "accessToken": "eyJ...", "refreshToken": "eyJ...", "expiresIn": 900, "profileType": "tutor", "audience": "ninos", "user": { ... } }
 ```
+
+- Al reabrir la app con el refresh token guardado, **tomar `profileType` y `audience` de esta respuesta**: el login no se repite.
 
 - **Rotación**: cada refresh devuelve un `refreshToken` **nuevo** y el anterior queda revocado. Guardar siempre el último.
 - **No reutilizar** un refresh token ya usado: el backend cierra esa sesión de dispositivo (`401` "Tu sesión en este dispositivo se cerró por seguridad"). Las sesiones de otros dispositivos (ej. la web) no se afectan. Si ocurre, volver a pedir login.
@@ -149,7 +162,25 @@ Formato de los errores con `code`:
 
 Es **idempotente**: si la sesión ya estaba cerrada responde 200 con los datos existentes. Si la petición no alcanza a salir (cierre forzado), no hay problema: el backend la cerrará por `timeout`.
 
-### 3.4 Consultar estado — `GET /presence/me`
+### 3.4 Hijos del tutor — `GET /students/mine`
+
+Para saber con qué hijo se juega (solo `profileType: "tutor"`). Petición GET **sin cuerpo**.
+
+```json
+// Respuesta 200
+{
+  "totalStudents": 1,
+  "students": [
+    { "id": "uuid-del-hijo", "firstName": "matias", "lastName": "villegas ceballos", "grade": "2° Primaria", "age": 7, "...": "..." }
+  ]
+}
+```
+
+- Un solo hijo: usarlo directamente como `studentId`.
+- Varios hijos: mostrar un selector y recordar la elección en el dispositivo.
+- Ningún hijo: abrir la sesión sin `studentId`.
+
+### 3.5 Consultar estado — `GET /presence/me`
 
 La usa el dashboard web; Unity puede usarla para depurar.
 
@@ -413,6 +444,6 @@ Con el dashboard del tutor abierto, el punto pasa a **verde** tras el paso 2 (en
 
 ## 7. Pendientes relacionados
 
-- **Selección del hijo**: todavía no existe un endpoint para que la app liste los hijos del tutor (para enviar `studentId`). Mientras tanto, `studentId` es opcional.
-- **Telemetría de juego** (sesiones de juego, trazos, operaciones): módulo pendiente; se relacionará con `sessionId` y `studentId`.
+- **Selección del hijo**: ✅ `GET /students/mine` (sección 3.4). La app ya elige sola cuando hay un hijo; falta la pantalla de selección cuando hay varios.
+- **Telemetría de juego** (sesiones de juego, trazos, operaciones): ya existen los endpoints de **lectura** (`/telemetry/progress`, `/telemetry/performance`); faltan los de **escritura** que usará la app.
 - Requiere la migración `database/migrations/20261008_app_sessions.sql` aplicada en Supabase.

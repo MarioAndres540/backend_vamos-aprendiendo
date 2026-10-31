@@ -84,12 +84,10 @@ describe('AssessmentsService', () => {
     const mockClient = (link: { id: string } | null) => {
       const mockInsert = jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
-          single: jest
-            .fn()
-            .mockResolvedValue({
-              data: { id: 'assess-2', created_at: '2026-10-25T10:00:00Z' },
-              error: null,
-            }),
+          single: jest.fn().mockResolvedValue({
+            data: { id: 'assess-2', created_at: '2026-10-25T10:00:00Z' },
+            error: null,
+          }),
         }),
       });
       const linkQuery: any = {
@@ -102,11 +100,9 @@ describe('AssessmentsService', () => {
           if (table === 'tutor_students') return linkQuery;
           if (table === 'initial_assessments') return { insert: mockInsert };
           return {
-            update: jest
-              .fn()
-              .mockReturnValue({
-                eq: jest.fn().mockResolvedValue({ error: null }),
-              }),
+            update: jest.fn().mockReturnValue({
+              eq: jest.fn().mockResolvedValue({ error: null }),
+            }),
           };
         }),
       });
@@ -140,6 +136,60 @@ describe('AssessmentsService', () => {
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(mockInsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getHistory (pestaña Diagnósticos)', () => {
+    const mockClient = (link: { id: string } | null) => {
+      const historyQuery: any = {
+        select: jest.fn(() => historyQuery),
+        order: jest.fn(() => historyQuery),
+        eq: jest.fn(() => historyQuery),
+        then: (resolve: any) =>
+          Promise.resolve({ data: [{ id: 'eval-1' }], error: null }).then(
+            resolve,
+          ),
+      };
+      const linkQuery: any = {
+        select: jest.fn(() => linkQuery),
+        eq: jest.fn(() => linkQuery),
+        maybeSingle: jest.fn().mockResolvedValue({ data: link, error: null }),
+      };
+      const from = jest.fn((table: string) =>
+        table === 'tutor_students' ? linkQuery : historyQuery,
+      );
+      supabaseMock.getClient.mockReturnValue({ from });
+      return { from, historyQuery };
+    };
+
+    it('devuelve los formularios del estudiante cuando es del tutor', async () => {
+      const { historyQuery } = mockClient({ id: 'link-1' });
+
+      await expect(service.getHistory('tutor-1', 'est-1')).resolves.toEqual([
+        { id: 'eval-1' },
+      ]);
+      expect(historyQuery.eq).toHaveBeenCalledWith('student_id', 'est-1');
+    });
+
+    it('responde 403 con un estudiante de otra cuenta y no consulta el historial', async () => {
+      const { from } = mockClient(null);
+
+      await expect(
+        service.getHistory('tutor-1', 'ajeno'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(from).not.toHaveBeenCalledWith('initial_assessments');
+    });
+
+    it('sin studentId devuelve los formularios que llenó el usuario', async () => {
+      const { from, historyQuery } = mockClient(null);
+
+      await service.getHistory('adulto-1');
+
+      expect(from).not.toHaveBeenCalledWith('tutor_students');
+      expect(historyQuery.eq).toHaveBeenCalledWith(
+        'evaluator_profile_id',
+        'adulto-1',
+      );
     });
   });
 });
