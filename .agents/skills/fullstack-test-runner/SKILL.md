@@ -1,41 +1,35 @@
 ---
 name: fullstack-test-runner
-description: Runs, analyzes, and debugs unit tests, e2e tests, and code quality checks for both NestJS backend and Nuxt 4 frontend.
+description: Runs, analyzes, and debugs unit tests, e2e tests, and build/lint checks for both the NestJS backend and the Nuxt 4 frontend.
 ---
 
 # Fullstack Test & Quality Runner
 
-Use this skill when running tests, diagnosing test suite errors, or checking TypeScript / ESLint health before merging changes.
+Use this skill when running tests, diagnosing failures, or checking health before merging changes.
 
 ## Commands Reference
 
-### Backend (NestJS)
-Run in `backend/`:
+### Backend (NestJS) — run in `backend_vamos-aprendiendo/`
 ```bash
-# Run unit tests
-npm run test
-
-# Run tests in watch mode
+npm run test        # unit tests (Jest)
 npm run test:watch
-
-# Run e2e tests
-npm run test:e2e
-
-# Run linter and formatting
-npm run lint
+npm run test:cov    # coverage
+npm run test:e2e    # e2e (Supertest)
+npm run lint        # eslint --fix (modifies files)
+npm run build
 ```
 
-### Frontend (Nuxt)
-Run in `frontend/`:
+### Frontend (Nuxt) — run in `frontend-vamos-aprendiendo/`
+The frontend has no test runner configured.
 ```bash
-# Typecheck
 npx nuxi typecheck
-
-# Build check
 npm run build
 ```
 
 ## Diagnosis Workflow
-1. **Run target test suite** using `run_command`.
-2. **Analyze failure outputs**: Look for unhandled promise rejections, missing mock providers (e.g. `SupabaseService`, `ConfigService`), or DTO validation mismatches.
-3. **Fix and verify**: Apply fixes in the respective controller/service/test file and re-run the test suite until all pass.
+1. **Run the target suite** with the Bash tool in the right folder.
+2. **Analyze failures**: unhandled promise rejections, missing mock providers (`SupabaseService`, `ConfigService`, `JwtService`), DTO validation mismatches.
+3. **Fix and verify** in the controller/service/spec and re-run until everything passes.
+
+## Context7 validation (required before tests)
+For every code change, first validate the libraries and APIs used against current docs via the Context7 MCP (`resolve-library-id`, then `query-docs`) using the versions in `package.json`. Fix any mismatch, then run the commands above. Report which libraries were checked; if Context7 is not connected, say so.

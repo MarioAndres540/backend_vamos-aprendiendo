@@ -81,18 +81,24 @@ Add route annotations and guard protection:
 import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { ItemService } from './item.service';
 import { CreateItemDto } from './dto/create-item.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
 
 @Controller('items')
 export class ItemController {
   constructor(private readonly itemService: ItemService) {}
 
+  @UseGuards(JwtAuthGuard)
   @Get()
   findAll() {
     return this.itemService.findAll();
   }
 
-  @UseGuards(JwtAuthGuard)
+  // Roles: admin, usuario, profesor, test. Añadir ActiveAccessGuard si depende del trial.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @Post()
   create(@Body() createItemDto: CreateItemDto) {
     return this.itemService.create(createItemDto);
@@ -103,5 +109,8 @@ export class ItemController {
 ### 4. Register in `<feature-name>.module.ts` and `AppModule`
 Import `SupabaseModule` if needed, export the service if shared, and register the new module in `src/app.module.ts`.
 
-### 5. Add Unit Tests (`.spec.ts`)
+### 5. Database and docs
+Add a dated SQL file in `database/migrations/` for new tables, decorate controllers/DTOs for Swagger (`@ApiTags`, `@ApiOperation`, `@ApiProperty`) and note the change in `CHANGELOG.md`. See `ARQUITECTURA.md` for the full guide.
+
+### 6. Add Unit Tests (`.spec.ts`)
 Mock `SupabaseService` methods to test both success and error paths with Jest.
