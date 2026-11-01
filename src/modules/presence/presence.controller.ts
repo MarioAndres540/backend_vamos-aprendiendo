@@ -21,6 +21,7 @@ import { PresenceService } from './presence.service';
 import { StartAppSessionDto } from './dto/start-app-session.dto';
 import { EndAppSessionDto } from './dto/end-app-session.dto';
 import { QueryAppHistoryDto } from './dto/query-app-history.dto';
+import { QueryMonthlyUsageDto } from './dto/query-monthly-usage.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -114,6 +115,29 @@ export class PresenceController {
   @ApiResponse({ status: 400, description: 'days fuera de rango (1 a 365)' })
   getMyHistory(@Req() req: any, @Query() query: QueryAppHistoryDto) {
     return this.presenceService.getHistory(req.user.userId, query.days ?? 30);
+  }
+
+  @Get('monthly-usage')
+  @ApiOperation({
+    summary:
+      'Tiempo con la app abierta este mes frente al mismo tramo del mes anterior (hora de America/Bogota)',
+    description:
+      'Mide conexión de la app (latidos), no juego activo. Une sesiones solapadas y no cuenta tiempo sin latidos.',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Segundos del mes actual y del anterior, diferencia y porcentaje',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'El estudiante no está vinculado a la cuenta',
+  })
+  getMonthlyUsage(@Req() req: any, @Query() query: QueryMonthlyUsageDto) {
+    return this.presenceService.getMonthlyUsage(
+      req.user.userId,
+      query.studentId,
+    );
   }
 
   @Get('status/:userId')

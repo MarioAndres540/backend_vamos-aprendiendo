@@ -1,0 +1,32 @@
+# Blueprint de Render: https://render.com/docs/blueprint-spec
+# Los secretos nunca van en este archivo: JWT los genera Render y los demás se piden en el panel.
+services:
+  - type: web
+    runtime: node
+    name: vamos-aprendiendo-api
+    region: virginia
+    branch: develop
+    # --include=dev: nest build necesita las devDependencies y NODE_ENV=production las omitiría
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /api/v1
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # URL del frontend en Vercel, sin barra final
+      - key: CORS_ORIGINS
+        sync: false

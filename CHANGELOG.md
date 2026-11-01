@@ -7,6 +7,36 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### 🚀 Preparación para el despliegue (2026-11-01)
+- `src/main.ts`: los orígenes de CORS salen de la nueva variable `CORS_ORIGINS` (separados por coma; por defecto `http://localhost:4242`).
+- El servidor no arranca si faltan `SUPABASE_URL`, `JWT_SECRET` o `JWT_REFRESH_SECRET`.
+- Swagger (`/api/docs`) solo se publica cuando `NODE_ENV` no es `production`.
+- `.env.example` actualizado con `NODE_ENV`, `CORS_ORIGINS` y `SUPABASE_SERVICE_ROLE_KEY`.
+- Nuevo `render.yaml`: Blueprint del servicio en Render. Los secretos JWT los genera Render y las credenciales de Supabase se ingresan en su panel.
+
+### 📥 Nuevo — Importar los ejercicios ya completados en el dispositivo (2026-11-01)
+**Acción requerida:** ejecutar `database/migrations/20261101_import_completed_exercises.sql` en Supabase (idempotente) y reiniciar el backend.
+- **Causa del problema:** la app mostraba ejercicios completados (guardados solo en el dispositivo) y el dashboard no, porque Unity nunca los había enviado (llamaba a `/progress/*`, que no existen). En la base había 0 intentos.
+- **`POST /telemetry/exercises/import`** (`TelemetryService.importExercises`, `ImportExercisesDto`): registra una vez los ejercicios que el dispositivo ya tenía completados. Quedan con `trazos.source = 'import'`, sin cobertura ni exactitud (NULL) y dan el XP de la regla nueva `exercise_imported` (10, configurable; `is_active = FALSE` para que no den XP). Idempotente y atómico (función `import_completed_exercises`, mismo candado que `record_exercise_attempt`): lo ya aprobado se omite, hasta 100 ejercicios por petición, mismas validaciones de hijo que `/telemetry/exercises`.
+- Es una **declaración de la app**: el backend no puede comprobarla (igual que la cobertura y la exactitud).
+- Pruebas: la integración con PostgreSQL real (`database/tests/exercise-attempts.integration.cjs`) cubre importar lo nuevo, omitir lo aprobado y lo desconocido, repetir sin duplicar, un intento real tras importar (sin XP doble), 20 importaciones simultáneas y mezcladas con intentos (un solo XP por ejercicio) y regla apagada. Jest: 167 pruebas (+13 en `import-exercises.service.spec.ts`). `docs/unity-exercises.md` §6 actualizado.
+
+### 🏆 Nuevo — Ejercicios, XP, progreso por ruta y tiempo mensual (2026-10-31)
+**Acción requerida:** ejecutar `database/migrations/20261031_exercise_attempts_and_xp.sql` en Supabase → SQL Editor (idempotente) y reiniciar el backend. Contrato para Unity: `docs/unity-exercises.md`.
+
+- **Migración `20261031_exercise_attempts_and_xp.sql`:**
+  - Nuevas tablas `learning_routes` (Matemáticas, Escritura), `exercise_catalog` (id único por ejercicio, `matematicas.d_7`, `escritura.lo_a`, `escritura.up_E`; 10 de Matemáticas y 10 de Escritura activos, las 44 consonantes cargadas pero **inactivas**), `reward_rules` (regla `exercise_approved`: 10 XP, cobertura ≥ 0,85 y exactitud ≥ 0,97, configurable), `exercise_completions` (un aprobado por estudiante y ejercicio) y `xp_ledger` (una recompensa por ejercicio).
+  - `trazos` se **reutiliza** como registro de intentos en lugar de crear otra tabla: columnas nuevas (`exercise_id`, `client_attempt_id`, `coverage_pct`, `accuracy_pct`, `start_point_ok`, `order_ok`, `expected_path`, `off_path_count`) y se quitaron los `NOT NULL` y valores por defecto de `session_id`, `puntos_trazo`, `direccion_detectada`, `rotacion_detectada`, `precision_pct` y `tiempo_trazo_seg`: una métrica que Unity no envía queda `NULL`, no `0`.
+  - Función `record_exercise_attempt()`: guarda el intento, el aprobado y el XP en **una transacción**, con candado por (estudiante, ejercicio) e índices únicos. Solo la ejecuta `service_role`.
+- **`POST /telemetry/exercises`** (`TelemetryService.recordExercise`): valida autenticación, rol (`usuario`, `test`, `admin`), cuenta activa y la estructura (`RecordExerciseDto`); verifica que el `studentId` sea del tutor (403) y exige `studentId` si el tutor tiene hijos (400). Idempotente por `clientAttemptId`. El backend decide si aprobó; el cliente no envía `passed` ni XP (se rechazan). Responde `passed`, `awarded`, `xpAwarded`, `totalXp`, `attemptNumber`, `alreadyCompleted` y `duplicate`.
+- **`GET /telemetry/route-progress`**: por ruta, completadas (aprobados), en progreso (intentos sin aprobar) y pendientes (disponibles sin intentos), más `completedExerciseIds` y `hasData` (false si la app aún no envió nada: no se inventan actividades en progreso).
+- **`GET /telemetry/xp`**: XP acumulado, cantidad de recompensas e historial. Los niveles **no** se implementaron: se calcularán después sobre `SUM(xp_ledger.xp_amount)`.
+- **`GET /presence/monthly-usage`** (`PresenceService.getMonthlyUsage`): tiempo con la app abierta este mes frente al **mismo tramo** del mes anterior, en `America/Bogota` (`common/utils/timezone.ts`), con diferencia en segundos y porcentaje. Une sesiones solapadas, reparte las que cruzan el cambio de mes, cuenta las abiertas sin latidos solo hasta su último latido y no da porcentaje si el mes anterior no tiene tiempo. **Limitación:** `app_sessions` mide conexión de la app (latidos), no juego activo.
+- **`GET /telemetry/performance`**: ya no promedia como 0 las métricas nulas (precisión y tiempo que Unity aún no envía).
+- DTOs `RecordExerciseDto`, `StrokeDto`/`StrokePointDto` (antes vacío; máximo 12 trazos y 400 puntos por trazo), `QueryXpDto`, `QueryMonthlyUsageDto`.
+- **Verificación:** la migración y la función se probaron en un PostgreSQL real y temporal (no se tocó Supabase), con el script reproducible `database/tests/exercise-attempts.integration.cjs` (instrucciones en su encabezado; no agrega dependencias al proyecto). Resultados (migración idempotente al ejecutarla dos veces): 20 peticiones simultáneas del mismo ejercicio dejan 1 aprobado y 10 XP, con números de intento distintos; 20 reenvíos del mismo `clientAttemptId` dejan 1 intento y 10 XP; cobertura 0,849 no aprueba y 0,85/0,97 sí; ningún aprobado sin XP. Pruebas Jest: suite completa en verde (nuevas: `telemetry-exercises.service.spec.ts`, `record-exercise.dto.spec.ts`, `presence-monthly.service.spec.ts`, `timezone.spec.ts`); `tsc` sin errores y `nuxt build` del frontend correcto.
+- **Rutas `/progress/mine` y `/progress/sync`:** no existen en el backend ni se usan en la web; solo las llama Unity (`ProgressSyncService.cs`). Migración propuesta en `docs/unity-exercises.md` §6 (no se tocó Unity).
+
 ### 🎮 Nuevo — Contenido de niños o de adultos para la app de Unity (2026-10-29)
 - **`audience`** en `POST /auth/login` (en la raíz y en `user`): `ninos` para el tutor, `adultos` para el adulto y `null` para tester, profesor y admin (`audienceForProfile` en `auth.service.ts`). Antes la app solo recibía `profileType` y tenía que deducirlo.
 - **`POST /auth/refresh` devuelve también `profileType` y `audience`** (recalculados en cada renovación). La app de Unity los necesita al reabrir con el token guardado, porque no repite el login. También sirve para que un cambio de rol o un hijo agregado se reflejen sin volver a iniciar sesión. Resuelve el pendiente #6.
@@ -165,9 +195,25 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
    - [ ] Exportar el esquema base real de `profiles`, `students` y `refresh_tokens` a una migración inicial en `database/migrations/` (hoy no está en el repositorio).
 
 1. **Módulo de Telemetría (`src/modules/telemetry/`)**:
-   - Implementar la lógica de negocio en `telemetry.service.ts` y endpoints en `telemetry.controller.ts`.
-   - Persistir sesiones de juego (`CreateGameSessionDto`) y trazos cinemáticos/táctiles (`StrokePointDto`).
+   - ✅ Lectura (progreso, desempeño) y, desde 2026-10-31, escritura de ejercicios (`POST /telemetry/exercises`), XP y progreso por ruta.
+   - Persistir sesiones de juego (`CreateGameSessionDto`, sigue vacío) y operaciones matemáticas (`operaciones_resueltas`, `lectoescritura_intentos`).
    - Conectar los reportes del dashboard del docente a las métricas reales de telemetría.
+   - [ ] **Aplicar en Supabase → SQL Editor** `database/migrations/20261031_exercise_attempts_and_xp.sql`. Sin ella, `/telemetry/exercises`, `/telemetry/route-progress` y `/telemetry/xp` responden 500.
+
+11. **📋 TODO — Pendientes de Unity y del seguimiento del aprendizaje** (acordados el 2026-10-31; ninguno está hecho):
+    - [ ] Implementar en Unity la captura y envío de información de **lectura**.
+    - [ ] Definir la estructura de datos para evaluar las actividades de **lógica**.
+    - [ ] Definir cómo medir y registrar la **atención** del estudiante.
+    - [ ] Definir cómo medir y registrar la **memoria**.
+    - [ ] Definir cómo medir y registrar la **creatividad**.
+    - [ ] Completar la integración de datos de **escritura** (2026-10-31): Unity ya envía cada intento a `POST /telemetry/exercises` y baja `GET /telemetry/route-progress`; falta **probarlo con una cuenta real** (repetir un ejercicio con `marisolvice@gmail.com` y ver el XP en el dashboard) y enviar las métricas geométricas.
+    - [ ] Implementar en Unity el envío de **métricas geométricas** (trayectoria esperada, puntos recorridos, desviaciones, punto de inicio, orden, dirección, cobertura, exactitud e intentos) para calcular la precisión de letras y números. Incluye **cambiar la medición de las salidas de la línea**: hoy el trazo se descarta y se repite sin contarse (`TraceChallenge.RejectStroke`).
+    - [ ] Definir la fórmula de `precisionPct` (forma + orden + dirección). Hasta entonces el dashboard muestra "No disponible".
+    - [ ] Decidir qué hacer con el progreso que los niños ya tienen guardado solo en `PlayerPrefs` (sin cobertura ni exactitud): descartarlo o importarlo con una regla explícita.
+    - [ ] Validar el flujo completo de recompensas **XP** desde Unity hasta el dashboard.
+    - [ ] Diseñar e implementar el **sistema de niveles** y progresión (XP necesaria por nivel, nivel actual, progreso al siguiente y recompensas).
+    - [ ] Decidir si las consonantes se activan (`exercise_catalog.is_active`) cuando Unity libere esa tarjeta.
+    - [ ] Medir **tiempo de juego activo** (hoy solo hay tiempo de conexión de la app).
 2. **Carga Masiva de Docentes Pre-autorizados (Admin)**:
    - Endpoint administrativo para importar listados de docentes autorizados vía archivo CSV/Excel por institución (`POST /api/v1/admin/institutions/:id/preauth-import`).
 3. **Módulo de Notificaciones y Magic Links por Correo (`MailModule`)**:
@@ -194,3 +240,12 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
    - ✅ (2026-10-25) El formulario de un hijo agregado desde Configuración ya se guarda con su `studentId`. Sigue pendiente: el formulario del **registro** (primer inicio de sesión) se guarda sin `studentId`; con varios hijos registrados de una vez no se sabe de cuál es.
 9. **Integración de la app de Unity** con `docs/unity-app-sessions.md`: implementar el servicio de sesiones en Unity y probar el flujo completo con el dashboard del tutor.
 6. ✅ **Refresco de token y tipo de perfil** (2026-10-29): `POST /auth/refresh` devuelve `profileType` y `audience`; la web actualiza la cookie `profile_type` y Unity su `PlayerSession`.
+10. **🔐 Gestión de secretos y escaneo** (análisis del 2026-10-31; hacerlo antes del primer despliegue):
+    - **Rotar** `JWT_SECRET` y `JWT_REFRESH_SECRET`. Cierra todas las sesiones, también las de la app de Unity.
+    - **Quitar los valores por defecto** de los secretos JWT en `auth.module.ts`, `auth.service.ts` y `jwt.strategy.ts`: si falta la variable, el backend no debe arrancar.
+    - **Ordenar la llave de `SupabaseService`**: hoy prueba `SUPABASE_KEY` y `SUPABASE_ANON_KEY` antes que `SUPABASE_SERVICE_ROLE_KEY`. Debe usar una sola variable y fallar si no existe.
+    - **Revisar RLS** en las tablas de Supabase.
+    - **Gestor de secretos**: se recomienda **Infisical Cloud** (plan gratis, núcleo MIT, se puede pasar a servidor propio). Se arrancaría con `infisical run -- npm run start:dev`, sin cambiar `ConfigService` (confirmarlo en una prueba). Alternativa: Doppler, si se prefiere lo más simple. OpenBao se descarta por ahora: exige operar un servidor propio, con respaldos y desbloqueo. Confirmar precios y límites en las páginas oficiales.
+    - **Escáner**: **Gitleaks** antes de cada commit y en GitHub Actions, con reglas propias para `JWT_SECRET` y `SUPABASE_SERVICE_ROLE_KEY`, porque un secreto HMAC no se puede verificar contra un servicio externo. **TruffleHog** como revisión periódica del historial.
+    - **GitHub**: activar *secret scanning* y *push protection*.
+    - **Evaluar limpiar el historial de git** después de rotar: reescribirlo afecta a todos los clones.

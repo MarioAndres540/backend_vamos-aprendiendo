@@ -1,12 +1,18 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import {
+  APP_TIME_ZONE,
+  zonedParts,
+  zonedStartOfDay,
+} from '../../common/utils/timezone';
 import {
   AppSessionClient,
   StartAppSessionDto,
@@ -24,7 +30,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Tope de sesiones que devuelve el historial (Analíticas)
 export const HISTORY_SESSIONS_LIMIT = 500;
 
+// Tope de sesiones que se leen para el tiempo mensual (dos meses de uso)
+export const MONTHLY_SESSIONS_LIMIT = 5000;
+
 type EndReason = ClientEndReason | 'timeout';
+
+interface MonthlySessionRow {
+  started_at: string;
+  last_heartbeat_at: string;
+  ended_at: string | null;
+}
 
 interface AppSessionRow {
   id: string;
@@ -339,9 +354,154 @@ export class PresenceService {
     };
   }
 
+  /**
+   * Tiempo con la app abierta en el mes actual frente al MISMO tramo del mes anterior (hora de America/Bogota).
+   * Si hoy es el día 17 a las 10:00, se compara del 1 al 17 a las 10:00 de este mes con el mismo tramo del mes
+   * anterior (limitado a la duración de ese mes: el 31 de marzo contra febrero se compara con todo febrero).
+   *
+   * Qué mide: tiempo de CONEXIÓN de la app (de la apertura al último latido o cierre), no tiempo de juego activo: mientras la
+   * app está abierta y en pausa o sin tocar sigue enviando latidos. Para no contarlo dos veces, las sesiones
+   * que se solapan (dos dispositivos a la vez) se unen y una sesión que cruza la medianoche del cambio de mes se
+   * reparte entre ambos meses. Una sesión abierta sin latidos recientes se cuenta hasta su último latido.
+   */
+  async getMonthlyUsage(
+    userId: string,
+    studentId?: string,
+    client: AppSessionClient = 'unity',
+  ) {
+    if (studentId) await this.assertStudentLinked(userId, studentId);
+    await this.closeStaleSessions(userId, client);
+
+    const now = new Date();
+    const { year, month } = zonedParts(now);
+    const currentStart = zonedStartOfDay(year, month - 1, 1);
+    const previousStart = zonedStartOfDay(year, month - 2, 1);
+    const elapsedMs = now.getTime() - currentStart.getTime();
+    const previousFullEnd = currentStart;
+    const previousEnd = new Date(
+      Math.min(previousStart.getTime() + elapsedMs, previousFullEnd.getTime()),
+    );
+
+    let query = this.supabaseService
+      .getClient()
+      .from('app_sessions')
+      .select('started_at, last_heartbeat_at, ended_at')
+      .eq('user_id', userId)
+      .eq('client', client)
+      .lt('started_at', now.toISOString())
+      .or(`ended_at.is.null,ended_at.gt.${previousStart.toISOString()}`);
+    if (studentId) query = query.eq('student_id', studentId);
+
+    const { data, error } = await query.limit(MONTHLY_SESSIONS_LIMIT);
+    if (error) this.fail('consultar el tiempo de juego', error);
+
+    const intervals = ((data ?? []) as MonthlySessionRow[]).map((row) =>
+      this.sessionInterval(row, now),
+    );
+
+    const current = this.sumWindow(intervals, currentStart, now);
+    const previous = this.sumWindow(intervals, previousStart, previousEnd);
+
+    const differenceSeconds = current.seconds - previous.seconds;
+    return {
+      client,
+      timeZone: APP_TIME_ZONE,
+      studentId: studentId ?? null,
+      // Mide conexión de la app (latidos), no juego activo
+      measures: 'app_connection',
+      elapsedDays: zonedParts(now).day,
+      current: {
+        from: currentStart.toISOString(),
+        to: now.toISOString(),
+        seconds: current.seconds,
+        sessionsCount: current.sessionsCount,
+      },
+      previous: {
+        from: previousStart.toISOString(),
+        to: previousEnd.toISOString(),
+        seconds: previous.seconds,
+        sessionsCount: previous.sessionsCount,
+        // El mes anterior es más corto que el tramo transcurrido: se comparó contra todo ese mes
+        capped: previousEnd.getTime() >= previousFullEnd.getTime(),
+      },
+      comparison: {
+        differenceSeconds,
+        // Sin tiempo en el mes anterior no hay base para un porcentaje
+        percentChange: previous.seconds
+          ? Math.round((differenceSeconds * 1000) / previous.seconds) / 10
+          : null,
+        direction:
+          differenceSeconds > 0
+            ? 'up'
+            : differenceSeconds < 0
+              ? 'down'
+              : 'same',
+      },
+    };
+  }
+
   // ==========================================
   // HELPERS
   // ==========================================
+
+  private async assertStudentLinked(userId: string, studentId: string) {
+    const { count, error } = await this.supabaseService
+      .getClient()
+      .from('tutor_students')
+      .select('id', { count: 'exact', head: true })
+      .eq('tutor_profile_id', userId)
+      .eq('student_id', studentId);
+
+    if (error) this.fail('verificar el estudiante', error);
+    if (!count) {
+      throw new ForbiddenException(
+        'Este estudiante no está vinculado a tu cuenta.',
+      );
+    }
+  }
+
+  /** Tramo real de una sesión: abierta con latidos recientes cuenta hasta ahora; sin latidos, hasta el último latido */
+  private sessionInterval(row: MonthlySessionRow, now: Date) {
+    const start = new Date(row.started_at).getTime();
+    let end: number;
+    if (row.ended_at) {
+      end = new Date(row.ended_at).getTime();
+    } else {
+      const lastBeat = new Date(row.last_heartbeat_at).getTime();
+      end =
+        now.getTime() - lastBeat > SESSION_TIMEOUT_SECONDS * 1000
+          ? lastBeat
+          : now.getTime();
+    }
+    return { start, end: Math.max(start, end) };
+  }
+
+  /** Segundos dentro de [from, to) uniendo los tramos que se solapan para no contar dos veces el mismo tiempo */
+  private sumWindow(
+    intervals: { start: number; end: number }[],
+    from: Date,
+    to: Date,
+  ) {
+    const clipped = intervals
+      .map(({ start, end }) => ({
+        start: Math.max(start, from.getTime()),
+        end: Math.min(end, to.getTime()),
+      }))
+      .filter(({ start, end }) => end > start)
+      .sort((a, b) => a.start - b.start);
+
+    let totalMs = 0;
+    let cursor = -Infinity;
+    for (const { start, end } of clipped) {
+      const effectiveStart = Math.max(start, cursor);
+      if (end > effectiveStart) totalMs += end - effectiveStart;
+      cursor = Math.max(cursor, end);
+    }
+    return {
+      seconds: Math.floor(totalMs / 1000),
+      sessionsCount: clipped.length,
+    };
+  }
 
   private async findOwnSession(
     userId: string,
