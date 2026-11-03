@@ -37,7 +37,8 @@ const connect = async (database) => {
   let failed = false;
   try {
     const admin = await connect('postgres');
-    await admin.query('CREATE DATABASE t');
+    // UTF8 como en Supabase (en Windows el clúster temporal nace en WIN1252)
+    await admin.query(`CREATE DATABASE t ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'`);
     await admin.end();
     const db = await connect('t');
 

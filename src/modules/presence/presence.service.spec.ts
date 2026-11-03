@@ -85,6 +85,43 @@ describe('PresenceService (sesiones de la app de Unity)', () => {
       expect(insert?.payload).toMatchObject({ user_id: 'tutor-1', client: 'unity', student_id: null });
     });
 
+    it('CTX-06: la sesión del tutor queda en el contexto del hogar, sin colegio', async () => {
+      const mock = setup({
+        'app_sessions:insert': [{ data: { id: 'sesion-1', started_at: '2026-10-08T14:00:00Z' }, error: null }],
+      });
+
+      await service.startSession('tutor-1', {});
+
+      const insert = mock.calls.find((c) => c.table === 'app_sessions' && c.op === 'insert');
+      expect(insert?.payload).toMatchObject({ context: 'hogar', institution_id: null });
+    });
+
+    it('CTX-06: la sesión de la cuenta de un alumno es escolar, con su estudiante y su colegio', async () => {
+      const mock = setup({
+        'profiles:select': [{ data: { student_id: 'est-9' }, error: null }],
+        'student_enrollments:select': [{ data: { institution_id: 'school-1' }, error: null }],
+        'app_sessions:insert': [{ data: { id: 'sesion-2', started_at: '2026-10-08T14:00:00Z' }, error: null }],
+      });
+
+      await service.startSession('alumno-1', {});
+
+      const insert = mock.calls.find((c) => c.table === 'app_sessions' && c.op === 'insert');
+      expect(insert?.payload).toMatchObject({
+        user_id: 'alumno-1',
+        student_id: 'est-9',
+        context: 'escolar',
+        institution_id: 'school-1',
+      });
+    });
+
+    it('CTX-03: la cuenta de un alumno no puede abrir una sesión a nombre de otro estudiante', async () => {
+      setup({ 'profiles:select': [{ data: { student_id: 'est-9' }, error: null }] });
+
+      await expect(service.startSession('alumno-1', { studentId: 'est-otro' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
     it('rechaza un estudiante que no está vinculado al tutor', async () => {
       setup({ 'tutor_students:select': [{ data: null, error: null, count: 0 }] });
 

@@ -7,6 +7,34 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### 🧑‍🏫 Nuevo — Módulo del profesor y progreso separado entre hogar y colegio (2026-11-02)
+Spec: `docs/specs/0001-modulo-profesor.md` (criterios CTX, TACC, TSUM y TPROG; cada prueba lleva el ID del criterio).
+**Acción requerida:** ejecutar `20261102_progress_context.sql` y `20261102_data_access_log.sql` (ya aplicadas en desarrollo).
+- **Progreso separado por ambiente:** la telemetría tiene `context` (`hogar` o `escolar`) y, en lo escolar, `institution_id`. El backend decide el ambiente según la cuenta autenticada: la cuenta de un estudiante registra en `escolar` con el colegio de su matrícula activa; la del tutor o el adulto, en `hogar`. La app no lo envía.
+  - Un mismo ejercicio se aprueba y da XP una vez por estudiante **en cada** ambiente (claves únicas por contexto).
+  - `record_exercise_attempt` e `import_completed_exercises` reciben `p_context` y `p_institution_id`; se eliminaron las firmas anteriores. Sin contexto, siguen registrando en el hogar.
+  - Lecturas de progreso, desempeño, rutas y XP filtradas por el ambiente de la cuenta. `app_sessions` guarda ambiente y colegio.
+  - La cuenta de estudiante ya puede registrar e importar ejercicios (`POST /telemetry/exercises` y `/exercises/import`).
+- **Nuevos endpoints del profesor:**
+  - `GET /teacher/assignments/:assignmentId/summary`: matriculados, con licencia vigente, activos en 7 días, dominio promedio de la materia y métricas por estudiante. Sin documentos.
+  - `GET /teacher/assignments/:assignmentId/students/:studentId`: datos personales y progreso escolar en cada materia que el profesor tiene en el grupo (rutas, ejercicios, exactitud, XP y tiempo de juego de 30 días).
+- **`TeacherAccessService`:** único punto de control. Responde 404 (nunca 403) si la asignación no es del profesor, está cerrada, el grupo está inactivo, el vínculo con el colegio no está activo o el estudiante no está matriculado en el grupo. Se valida contra la base en cada petición.
+- **Auditoría:** cada consulta del detalle de un estudiante queda en `data_access_log`. Si el registro falla, no bloquea la consulta.
+- Pruebas: 211 en Jest, más dos pruebas de integración contra PostgreSQL real. Las dos crean la base en UTF-8, y la nueva usa un puerto libre.
+- **Pendiente:** clasificar el rendimiento (criterios del equipo pedagógico), los datos del adulto responsable en el detalle, las pantallas para administrar grupos y asignaciones, y separar por ambiente el consumo de licencias.
+
+### 🏫 Nuevo — Grupos, asignaciones de profesores y cuenta propia del estudiante (2026-11-02)
+**Acción requerida:** ejecutar en orden `20261102_add_estudiante_role.sql` y `20261102_school_groups_and_student_accounts.sql` (ya aplicadas en el proyecto de desarrollo).
+- **Modelo** (fase 1 del análisis del perfil de profesor): tablas `subjects`, `subject_routes` (Español → Escritura, Matemáticas → Matemáticas), `class_groups` (grupo de un colegio por año lectivo) y `teacher_assignments` (profesor + grupo + materia). `student_enrollments` apunta al grupo (`class_group_id`) y un estudiante tiene como máximo una matrícula activa (índice único parcial).
+- **Rol `estudiante`**: cuenta propia de un alumno de colegio, enlazada a su registro con `profiles.student_id`. `profiles_age_check` admite su edad real (3 a 17 años); las demás cuentas siguen siendo de mayores de edad.
+  - El login devuelve `profileType: 'estudiante'` y `audience: 'ninos'`.
+  - `GET /students/mine` le devuelve su propio registro, así que Unity lo selecciona sin cambios.
+  - Telemetría y presencia aceptan su propio estudiante y, sin `studentId`, usan ese registro. No puede ver datos de otro estudiante (403), agregar hijos ni entrar al dashboard de profesor.
+- **`GET /teacher/dashboard` cambia de respuesta**: antes devolvía todos los estudiantes del colegio, con su número de documento. Ahora devuelve `institutions` (vínculos activos) y `assignments` (grupo, materia y estudiantes con matrícula activa en ese grupo), sin documentos.
+- Nuevo `src/modules/students/student-access.ts` (`isStudentLinked`, `findOwnStudentId`): un solo lugar para decidir si una cuenta puede ver a un estudiante (tutor vinculado o cuenta propia).
+- Pruebas: aislamiento del profesor por grupo, colegio y asignación cerrada; cuenta de alumno en estudiantes, telemetría y autenticación; 177 en total.
+- **Pendiente:** el progreso todavía no distingue colegio y hogar (contexto). Si un alumno con cuenta escolar también estuviera vinculado a un tutor, sus datos aparecerían en ambas cuentas. Los datos de ejemplo no tienen ese caso.
+
 ### 🚀 Preparación para el despliegue (2026-11-01)
 - `src/main.ts`: los orígenes de CORS salen de la nueva variable `CORS_ORIGINS` (separados por coma; por defecto `http://localhost:4242`).
 - El servidor no arranca si faltan `SUPABASE_URL`, `JWT_SECRET` o `JWT_REFRESH_SECRET`.

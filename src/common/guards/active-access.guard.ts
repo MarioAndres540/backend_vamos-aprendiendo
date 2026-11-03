@@ -25,11 +25,12 @@ export class ActiveAccessGuard implements CanActivate {
       });
     }
 
-    // Admin, Usuario regular y Profesor tienen acceso permanente
+    // Admin, Usuario regular, Profesor y Estudiante (licencia del colegio) tienen acceso permanente
     if (
       user.role === Role.ADMIN ||
       user.role === Role.USER ||
-      user.role === Role.TEACHER
+      user.role === Role.TEACHER ||
+      user.role === Role.STUDENT
     ) {
       return true;
     }

@@ -18,19 +18,25 @@ import { Role } from '../../common/enums/role.enum';
 import * as crypto from 'crypto';
 
 /** Tipo de perfil usado por el frontend para decidir el destino después del login */
-export type ProfileType = 'admin' | 'profesor' | 'tester' | 'tutor' | 'adulto';
+export type ProfileType =
+  | 'admin'
+  | 'profesor'
+  | 'tester'
+  | 'tutor'
+  | 'adulto'
+  | 'estudiante';
 
 /** Público del contenido de la app de Unity: el tutor juega con sus hijos (niños), el adulto para sí mismo */
 export type Audience = 'ninos' | 'adultos';
 
 /**
  * Público según el tipo de perfil. null: el tester elige la versión (como en el formulario inicial)
- * y profesor / admin no tienen contenido de juego.
+ * y profesor / admin no tienen contenido de juego. El estudiante de un colegio juega la versión de niños.
  */
 export const audienceForProfile = (
   profileType: ProfileType,
 ): Audience | null =>
-  profileType === 'tutor'
+  profileType === 'tutor' || profileType === 'estudiante'
     ? 'ninos'
     : profileType === 'adulto'
       ? 'adultos'
@@ -298,6 +304,7 @@ export class AuthService {
     if (role === Role.ADMIN) return 'admin';
     if (role === Role.TEACHER) return 'profesor';
     if (role === Role.TEST) return 'tester';
+    if (role === Role.STUDENT) return 'estudiante';
 
     const supabase = this.supabaseService.getClient();
     const { count, error } = await supabase

@@ -17,7 +17,7 @@ export class InstitutionResponseDto {
     email?: string;
 }
 
-export class StudentResponseDto {
+export class AssignedStudentResponseDto {
     @ApiProperty({ example: 'b0000000-0000-0000-0000-000000000001' })
     id: string;
 
@@ -27,11 +27,31 @@ export class StudentResponseDto {
     @ApiProperty({ example: 'Gómez' })
     lastName: string;
 
-    @ApiProperty({ example: 'Transición' })
-    grade: string;
+    @ApiProperty({ example: 8, nullable: true })
+    age: number | null;
 
-    @ApiProperty({ example: true })
-    isActive: boolean;
+    @ApiProperty({ example: true, description: 'Tiene cuenta propia de estudiante' })
+    hasAccount: boolean;
+}
+
+export class TeacherAssignmentResponseDto {
+    @ApiProperty({ example: 'c0000000-0000-0000-0000-000000000001' })
+    id: string;
+
+    @ApiProperty({ example: 'a0000000-0000-0000-0000-000000000001' })
+    institutionId: string;
+
+    @ApiProperty({ example: { id: 'uuid-grupo', name: '2A', grade: '2° Primaria', academicYear: 2026 } })
+    group: { id: string; name: string; grade: string; academicYear: number };
+
+    @ApiProperty({ example: { id: 'espanol', name: 'Español' } })
+    subject: { id: string; name: string };
+
+    @ApiProperty({ example: 5 })
+    totalStudents: number;
+
+    @ApiProperty({ type: [AssignedStudentResponseDto] })
+    students: AssignedStudentResponseDto[];
 }
 
 export class TeacherDashboardResponseDto {
@@ -50,12 +70,9 @@ export class TeacherDashboardResponseDto {
         email: string;
     };
 
-    @ApiProperty({ type: InstitutionResponseDto, nullable: true })
-    institution: InstitutionResponseDto | null;
+    @ApiProperty({ type: [InstitutionResponseDto] })
+    institutions: InstitutionResponseDto[];
 
-    @ApiProperty({ example: 25 })
-    totalStudents: number;
-
-    @ApiProperty({ type: [StudentResponseDto] })
-    students: StudentResponseDto[];
+    @ApiProperty({ type: [TeacherAssignmentResponseDto] })
+    assignments: TeacherAssignmentResponseDto[];
 }

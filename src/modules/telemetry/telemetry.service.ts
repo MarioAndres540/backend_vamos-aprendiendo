@@ -9,6 +9,10 @@ import {
 import { SupabaseService } from '../supabase/supabase.service';
 import { RecordExerciseDto } from './dto/record-exercise.dto';
 import { ImportExercisesDto } from './dto/import-exercises.dto';
+import {
+  findActiveInstitutionId,
+  ProgressContext,
+} from '../students/student-access';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Tope de filas por consulta de telemetría (trazos u operaciones) en el periodo
@@ -16,11 +20,16 @@ export const TELEMETRY_ROWS_LIMIT = 1000;
 // Tope de filas para el progreso por ruta y la experiencia (acotadas por el catálogo de ejercicios)
 export const EXERCISE_ROWS_LIMIT = 10000;
 
-/** Dueño de los datos: la cuenta y, si es un tutor, el hijo consultado */
+/**
+ * Dueño de los datos: la cuenta, el estudiante (hijo del tutor o el propio alumno) y el ambiente.
+ * Spec 0001: hogar = cuenta de tutor o adulto; escolar = cuenta de estudiante, con el colegio de su matrícula activa.
+ */
 interface Owner {
   userId: string;
   studentId: string | null;
   age: number | null;
+  context: ProgressContext;
+  institutionId: string | null;
 }
 
 interface CategoryRow {
@@ -139,7 +148,8 @@ export class TelemetryService {
       .select(
         'categoria_id, puntaje_inicial, puntaje_actual, meta, nivel_actual, updated_at',
       )
-      .eq('usuario_id', owner.userId);
+      .eq('usuario_id', owner.userId)
+      .eq('context', owner.context);
     progressQuery = owner.studentId
       ? progressQuery.eq('estudiante_id', owner.studentId)
       : progressQuery.is('estudiante_id', null);
@@ -200,6 +210,7 @@ export class TelemetryService {
         'tipo_elemento, valor_esperado, precision_pct, tiempo_trazo_seg, desviaciones, created_at',
       )
       .eq('usuario_id', owner.userId)
+      .eq('context', owner.context)
       .gte('created_at', since);
     strokesQuery = owner.studentId
       ? strokesQuery.eq('estudiante_id', owner.studentId)
@@ -209,6 +220,7 @@ export class TelemetryService {
       .from('operaciones_resueltas')
       .select('tiempo_seg, correcto')
       .eq('usuario_id', owner.userId)
+      .eq('context', owner.context)
       .gte('created_at', since);
     operationsQuery = owner.studentId
       ? operationsQuery.eq('estudiante_id', owner.studentId)
@@ -218,6 +230,7 @@ export class TelemetryService {
       .from('game_sessions')
       .select('id', { count: 'exact', head: true })
       .eq('usuario_id', owner.userId)
+      .eq('context', owner.context)
       .gte('started_at', since);
     sessionsQuery = owner.studentId
       ? sessionsQuery.eq('estudiante_id', owner.studentId)
@@ -355,6 +368,9 @@ export class TelemetryService {
         p_student_id: owner.studentId,
         p_exercise_id: dto.exerciseId,
         p_client_attempt_id: dto.clientAttemptId,
+        // El ambiente sale de la cuenta autenticada, nunca de la petición (spec 0001 CTX-03)
+        p_context: owner.context,
+        p_institution_id: owner.institutionId,
         p_payload: {
           coverage: dto.coverage,
           accuracy: dto.accuracy,
@@ -408,6 +424,8 @@ export class TelemetryService {
         p_user_id: owner.userId,
         p_student_id: owner.studentId,
         p_exercise_ids: dto.exerciseIds,
+        p_context: owner.context,
+        p_institution_id: owner.institutionId,
       })) as {
       data: ImportResult | null;
       error: { message?: string; code?: string } | null;
@@ -432,6 +450,7 @@ export class TelemetryService {
       .from('trazos')
       .select('exercise_id')
       .eq('usuario_id', owner.userId)
+      .eq('context', owner.context)
       .not('exercise_id', 'is', null);
     attemptsQuery = owner.studentId
       ? attemptsQuery.eq('estudiante_id', owner.studentId)
@@ -452,7 +471,8 @@ export class TelemetryService {
         supabase
           .from('exercise_completions')
           .select('exercise_id')
-          .eq('owner_id', owner.studentId ?? owner.userId),
+          .eq('owner_id', owner.studentId ?? owner.userId)
+          .eq('context', owner.context),
         attemptsQuery.limit(EXERCISE_ROWS_LIMIT),
       ]);
 
@@ -518,6 +538,7 @@ export class TelemetryService {
       .from('xp_ledger')
       .select('source_id, xp_amount, created_at')
       .eq('owner_id', owner.studentId ?? owner.userId)
+      .eq('context', owner.context)
       .order('created_at', { ascending: false })
       .limit(EXERCISE_ROWS_LIMIT);
     if (ledgerResult.error)
@@ -574,8 +595,9 @@ export class TelemetryService {
   }
 
   /**
-   * Con studentId: el hijo debe estar vinculado al tutor (si no, 403) y se usa su edad.
-   * Sin studentId: los datos del propio usuario, con la edad de su perfil.
+   * Con studentId: el hijo debe estar vinculado al tutor, o ser el de la cuenta propia del alumno (si no, 403),
+   * y se usa su edad. Sin studentId: la cuenta de un alumno usa su estudiante; las demás, los datos del propio
+   * usuario con la edad de su perfil.
    */
   private async resolveOwner(
     userId: string,
@@ -583,46 +605,79 @@ export class TelemetryService {
   ): Promise<Owner> {
     const supabase = this.supabaseService.getClient();
 
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('age, student_id')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) this.fail('consultar el perfil', error);
+
+    // Cuenta propia de un alumno: solo su registro de estudiante, en el ambiente escolar
+    const ownStudentId = (profile?.student_id as string | null | undefined) ?? null;
+    if (ownStudentId) {
+      if (studentId && studentId !== ownStudentId) {
+        throw new ForbiddenException(
+          'Este estudiante no está vinculado a tu cuenta.',
+        );
+      }
+      return this.studentOwner(userId, ownStudentId, 'escolar');
+    }
+
+    // Tutor: el hijo debe estar vinculado; sus datos son los del hogar
     if (studentId) {
-      const { data: link, error } = await supabase
+      const { data: link, error: linkError } = await supabase
         .from('tutor_students')
         .select('id')
         .eq('tutor_profile_id', userId)
         .eq('student_id', studentId)
         .maybeSingle();
 
-      if (error) this.fail('verificar el estudiante', error);
+      if (linkError) this.fail('verificar el estudiante', linkError);
       if (!link) {
         throw new ForbiddenException(
           'Este estudiante no está vinculado a tu cuenta.',
         );
       }
-
-      const { data: student, error: studentError } = await supabase
-        .from('students')
-        .select('age')
-        .eq('id', studentId)
-        .maybeSingle();
-      if (studentError) this.fail('consultar el estudiante', studentError);
-
-      return {
-        userId,
-        studentId,
-        age: toAge(student?.age),
-      };
+      return this.studentOwner(userId, studentId, 'hogar');
     }
-
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('age')
-      .eq('id', userId)
-      .maybeSingle();
-    if (error) this.fail('consultar el perfil', error);
 
     return {
       userId,
       studentId: null,
       age: toAge(profile?.age),
+      context: 'hogar',
+      institutionId: null,
+    };
+  }
+
+  private async studentOwner(
+    userId: string,
+    studentId: string,
+    context: ProgressContext,
+  ): Promise<Owner> {
+    const supabase = this.supabaseService.getClient();
+
+    // En el colegio, cada registro guarda el colegio de la matrícula activa
+    let institutionId: string | null = null;
+    if (context === 'escolar') {
+      const institution = await findActiveInstitutionId(supabase, studentId);
+      if (institution.error) this.fail('consultar la matrícula', institution.error);
+      institutionId = institution.institutionId;
+    }
+
+    const { data: student, error } = await supabase
+      .from('students')
+      .select('age')
+      .eq('id', studentId)
+      .maybeSingle();
+    if (error) this.fail('consultar el estudiante', error);
+
+    return {
+      userId,
+      studentId,
+      age: toAge(student?.age),
+      context,
+      institutionId,
     };
   }
 

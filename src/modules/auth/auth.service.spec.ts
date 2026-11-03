@@ -200,6 +200,7 @@ describe('AuthService - register', () => {
       [Role.ADMIN, 'admin'],
       [Role.TEACHER, 'profesor'],
       [Role.TEST, 'tester'],
+      [Role.STUDENT, 'estudiante'],
     ])('el rol %s se resuelve como %s sin consultar la base', async (role, expected) => {
       const mock = await setup();
       await expect(service.resolveProfileType('user-1', role)).resolves.toBe(expected);
@@ -225,6 +226,7 @@ describe('AuthService - register', () => {
   describe('público de la app de Unity (audience)', () => {
     it.each([
       ['tutor', 'ninos'],
+      ['estudiante', 'ninos'],
       ['adulto', 'adultos'],
       ['tester', null],
       ['profesor', null],

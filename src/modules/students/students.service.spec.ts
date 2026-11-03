@@ -111,7 +111,36 @@ describe('StudentsService.findMine (hijos del tutor)', () => {
       totalStudents: 0,
       students: [],
     });
-    expect(mock.calls.map((c) => c.table)).toEqual(['tutor_students']);
+    // Sin hijos también revisa si es la cuenta propia de un alumno
+    expect(mock.calls.map((c) => c.table)).toEqual([
+      'tutor_students',
+      'profiles',
+    ]);
+  });
+
+  it('la cuenta propia de un alumno devuelve su registro de estudiante (lo usa Unity)', async () => {
+    const mock = setup({
+      'tutor_students:select': [{ data: [], error: null }],
+      'profiles:select': [{ data: { student_id: 'est-1' }, error: null }],
+      'students:select': [{ data: [matias], error: null }],
+      'institutions:select': [
+        {
+          data: [{ id: matias.institution_id, name: 'Colegio Distrital' }],
+          error: null,
+        },
+      ],
+      'initial_assessments:select': [{ data: [], error: null }],
+    });
+
+    const result = await service.findMine('alumno-1');
+
+    expect(result.totalStudents).toBe(1);
+    expect(result.students[0]).toMatchObject({
+      id: matias.id,
+      relationship: null,
+    });
+    const studentsCall = mock.calls.find((c) => c.table === 'students');
+    expect(studentsCall?.filters).toContainEqual(['in', 'id', ['est-1']]);
   });
 
   it('devuelve el hijo con su colegio y le asigna el formulario de niños guardado sin estudiante', async () => {

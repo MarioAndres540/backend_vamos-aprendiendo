@@ -18,6 +18,10 @@ import {
   StartAppSessionDto,
 } from './dto/start-app-session.dto';
 import { ClientEndReason } from './dto/end-app-session.dto';
+import {
+  isStudentLinked,
+  resolveAccountContext,
+} from '../students/student-access';
 
 // La app envía un latido cada 15 s; tras 45 s sin latidos (3 perdidos) la sesión se cierra por inactividad
 export const HEARTBEAT_INTERVAL_SECONDS = 15;
@@ -84,15 +88,28 @@ export class PresenceService {
     const supabase = this.supabaseService.getClient();
     const client: AppSessionClient = dto.client ?? 'unity';
 
-    if (dto.studentId) {
-      const { count, error } = await supabase
-        .from('tutor_students')
-        .select('id', { count: 'exact', head: true })
-        .eq('tutor_profile_id', userId)
-        .eq('student_id', dto.studentId);
+    // Spec 0001 CTX-06: el ambiente (hogar / escolar) lo define la cuenta, no la app
+    const account = await resolveAccountContext(supabase, userId);
+    if (account.error) this.fail('consultar la cuenta', account.error);
+
+    let studentId = dto.studentId ?? null;
+    if (account.ownStudentId) {
+      // La cuenta de un alumno solo juega a su propio nombre
+      if (studentId && studentId !== account.ownStudentId) {
+        throw new BadRequestException(
+          'El estudiante no está vinculado a tu cuenta.',
+        );
+      }
+      studentId = account.ownStudentId;
+    } else if (studentId) {
+      const { linked, error } = await isStudentLinked(
+        supabase,
+        userId,
+        studentId,
+      );
 
       if (error) this.fail('validar el estudiante', error);
-      if (!count) {
+      if (!linked) {
         throw new BadRequestException(
           'El estudiante no está vinculado a tu cuenta.',
         );
@@ -106,7 +123,9 @@ export class PresenceService {
       .from('app_sessions')
       .insert({
         user_id: userId,
-        student_id: dto.studentId ?? null,
+        student_id: studentId,
+        context: account.context,
+        institution_id: account.institutionId,
         client,
         device_info: dto.deviceInfo ?? null,
         app_version: dto.appVersion ?? null,
@@ -445,15 +464,14 @@ export class PresenceService {
   // ==========================================
 
   private async assertStudentLinked(userId: string, studentId: string) {
-    const { count, error } = await this.supabaseService
-      .getClient()
-      .from('tutor_students')
-      .select('id', { count: 'exact', head: true })
-      .eq('tutor_profile_id', userId)
-      .eq('student_id', studentId);
+    const { linked, error } = await isStudentLinked(
+      this.supabaseService.getClient(),
+      userId,
+      studentId,
+    );
 
     if (error) this.fail('verificar el estudiante', error);
-    if (!count) {
+    if (!linked) {
       throw new ForbiddenException(
         'Este estudiante no está vinculado a tu cuenta.',
       );

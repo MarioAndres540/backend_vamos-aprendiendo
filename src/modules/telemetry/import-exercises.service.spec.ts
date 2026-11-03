@@ -104,6 +104,9 @@ describe('TelemetryService.importExercises (POST /telemetry/exercises/import)', 
       p_user_id: USER_ID,
       p_student_id: STUDENT_ID,
       p_exercise_ids: ['escritura.lo_a', 'matematicas.d_7'],
+      // Spec 0001 CTX-02: la cuenta del tutor importa en el contexto del hogar
+      p_context: 'hogar',
+      p_institution_id: null,
     });
   });
 

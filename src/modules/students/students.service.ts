@@ -8,6 +8,7 @@
 import { SupabaseService } from '../supabase/supabase.service';
 import { CreateStudentSetupDto } from './dto/create-student-setup.dto';
 import { CreateChildItemDto } from '../auth/dto/register.dto';
+import { findOwnStudentId } from './student-access';
 import {
   AssessmentDimensionScore,
   MyStudent,
@@ -241,6 +242,10 @@ export class StudentsService {
     );
   }
 
+  /**
+   * Estudiantes de la cuenta: los hijos del tutor o, en la cuenta propia de un alumno, su propio registro.
+   * Así GET /students/mine le devuelve a Unity el estudiante con el que juega un alumno de colegio.
+   */
   private async findLinks(userId: string): Promise<TutorLinkRow[]> {
     const { data, error } = await this.supabaseService
       .getClient()
@@ -253,6 +258,22 @@ export class StudentsService {
       throw new InternalServerErrorException(
         'No pudimos cargar tus estudiantes. Intenta de nuevo.',
       );
+    }
+
+    if (!data?.length) {
+      const own = await findOwnStudentId(
+        this.supabaseService.getClient(),
+        userId,
+      );
+      if (own.error) {
+        this.logger.error(`Error al consultar el perfil: ${own.error.message}`);
+        throw new InternalServerErrorException(
+          'No pudimos cargar tus estudiantes. Intenta de nuevo.',
+        );
+      }
+      if (own.studentId) {
+        return [{ student_id: own.studentId, relationship: null }];
+      }
     }
     return data ?? [];
   }

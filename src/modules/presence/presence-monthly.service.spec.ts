@@ -258,7 +258,9 @@ describe('PresenceService.getMonthlyUsage (tiempo de juego del mes)', () => {
 
   it('con studentId filtra por ese hijo; de otro tutor responde 403 y no consulta sesiones', async () => {
     setNow('2026-10-17T20:00:00Z');
-    const linked = setup([], { 'tutor_students:select': [{ count: 1 }] });
+    const linked = setup([], {
+      'tutor_students:select': [{ data: { id: 'link-1' } }],
+    });
     await service.getMonthlyUsage(USER_ID, 'student-1');
     const sessionsCall = linked.calls
       .filter((c) => c.table === 'app_sessions')
@@ -270,7 +272,11 @@ describe('PresenceService.getMonthlyUsage (tiempo de juego del mes)', () => {
     ]);
     expect(sessionsCall?.filters).toContainEqual(['eq', 'client', 'unity']);
 
-    const foreign = setup([], { 'tutor_students:select': [{ count: 0 }] });
+    // Ni hijo del tutor ni el estudiante de la propia cuenta
+    const foreign = setup([], {
+      'tutor_students:select': [{ data: null }],
+      'profiles:select': [{ data: { student_id: null } }],
+    });
     await expect(
       service.getMonthlyUsage(USER_ID, 'student-ajeno'),
     ).rejects.toBeInstanceOf(ForbiddenException);

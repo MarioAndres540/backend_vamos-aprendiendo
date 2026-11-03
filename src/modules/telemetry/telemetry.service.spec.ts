@@ -200,6 +200,41 @@ describe('TelemetryService (Actividades y Analíticas)', () => {
         mock.calls.find((c) => c.table === 'progreso_categoria')?.filters,
       ).toContainEqual(['is', 'estudiante_id', null]);
     });
+
+    it('la cuenta propia de un alumno, sin studentId, usa su registro de estudiante', async () => {
+      const mock = setup({
+        'profiles:select': [
+          { data: { age: 8, student_id: 'est-9' }, error: null },
+        ],
+        'students:select': [{ data: { age: 8 }, error: null }],
+        'categorias_cognitivas:select': [{ data: categories, error: null }],
+        'progreso_categoria:select': [{ data: [], error: null }],
+      });
+
+      const result = await service.getProgress('alumno-1');
+
+      expect(result.studentId).toBe('est-9');
+      expect(
+        mock.calls.find((c) => c.table === 'progreso_categoria')?.filters,
+      ).toEqual(
+        expect.arrayContaining([
+          ['eq', 'usuario_id', 'alumno-1'],
+          ['eq', 'estudiante_id', 'est-9'],
+        ]),
+      );
+      expect(mock.calls.some((c) => c.table === 'tutor_students')).toBe(false);
+    });
+
+    it('un alumno no puede pedir los datos de otro estudiante', async () => {
+      setup({
+        'tutor_students:select': [{ data: null, error: null }],
+        'profiles:select': [{ data: { student_id: 'est-9' }, error: null }],
+      });
+
+      await expect(
+        service.getProgress('alumno-1', 'est-otro'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 
   describe('getPerformance', () => {

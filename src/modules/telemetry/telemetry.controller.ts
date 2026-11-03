@@ -38,7 +38,8 @@ export class TelemetryController {
   @Post('exercises')
   @HttpCode(HttpStatus.OK)
   @UseGuards(RolesGuard, ActiveAccessGuard)
-  @Roles(Role.USER, Role.TEST, Role.ADMIN)
+  // La cuenta de estudiante juega en el colegio: registra en el contexto escolar (spec 0001 CTX-01)
+  @Roles(Role.USER, Role.TEST, Role.STUDENT, Role.ADMIN)
   @ApiOperation({
     summary:
       'Registrar un intento de ejercicio (letra o número) y entregar XP si queda aprobado por primera vez',
@@ -72,7 +73,8 @@ export class TelemetryController {
   @Post('exercises/import')
   @HttpCode(HttpStatus.OK)
   @UseGuards(RolesGuard, ActiveAccessGuard)
-  @Roles(Role.USER, Role.TEST, Role.ADMIN)
+  // La cuenta de estudiante juega en el colegio: registra en el contexto escolar (spec 0001 CTX-01)
+  @Roles(Role.USER, Role.TEST, Role.STUDENT, Role.ADMIN)
   @ApiOperation({
     summary:
       'Importar los ejercicios que el dispositivo ya tenía completados antes de enviarse al backend',
