@@ -9,6 +9,7 @@ import {
 import { SupabaseService } from '../supabase/supabase.service';
 import { RecordExerciseDto } from './dto/record-exercise.dto';
 import { ImportExercisesDto } from './dto/import-exercises.dto';
+import { ClaimXpDto } from './dto/claim-xp.dto';
 import {
   findActiveInstitutionId,
   ProgressContext,
@@ -78,6 +79,8 @@ interface LedgerRow {
   source_id: string;
   xp_amount: number | string;
   created_at: string;
+  /** Cuándo se cobró en el cofre del juego; null = aprobado pero todavía por cobrar */
+  claimed_at?: string | null;
 }
 
 /** Respuesta de record_exercise_attempt (migración 20261031) */
@@ -437,6 +440,33 @@ export class TelemetryService {
   }
 
   /**
+   * Cobra en el cofre el XP de los ejercicios indicados: marca sus filas del libro de XP como cobradas. Solo afecta a las
+   * del propio estudiante en su ambiente, y es idempotente (lo ya cobrado o inexistente se omite).
+   */
+  async claimXp(userId: string, dto: ClaimXpDto) {
+    const owner = await this.resolveOwner(userId, dto.studentId);
+    if (!owner.studentId) await this.assertHasNoLinkedStudents(userId);
+
+    const { data, error } = await this.supabaseService
+      .getClient()
+      .from('xp_ledger')
+      .update({ claimed_at: new Date().toISOString() })
+      .eq('owner_id', owner.studentId ?? owner.userId)
+      .eq('context', owner.context)
+      .in('source_id', dto.exerciseIds)
+      .is('claimed_at', null)
+      .select('xp_amount');
+    if (error) this.fail('cobrar la experiencia', error);
+
+    const claimed = (data ?? []) as { xp_amount: number | string }[];
+    return {
+      studentId: owner.studentId,
+      claimed: claimed.length,
+      xpClaimed: claimed.reduce((sum, row) => sum + Number(row.xp_amount), 0),
+    };
+  }
+
+  /**
    * Progreso por ruta de aprendizaje (Matemáticas, Escritura...), con datos reales:
    * completados = ejercicios aprobados; en progreso = con intentos registrados pero sin aprobar;
    * pendientes = disponibles (exercise_catalog.is_active) sin ningún intento. `hasData` es false mientras la app
@@ -527,8 +557,9 @@ export class TelemetryService {
   }
 
   /**
-   * Experiencia (XP) acumulada del estudiante y sus recompensas más recientes. Los niveles se calcularán después
-   * a partir de totalXp; por ahora solo se acumula y se consulta.
+   * Experiencia (XP) del estudiante y sus recompensas más recientes. Solo cuenta el XP cobrado en el cofre del juego
+   * (claimed_at); el de los ejercicios aprobados que aún no se cobraron se informa aparte (pending, pendingXp).
+   * Los niveles se calcularán después a partir de totalXp.
    */
   async getXp(userId: string, studentId?: string, limit = 20) {
     const owner = await this.resolveOwner(userId, studentId);
@@ -536,7 +567,7 @@ export class TelemetryService {
 
     const ledgerResult = await supabase
       .from('xp_ledger')
-      .select('source_id, xp_amount, created_at')
+      .select('source_id, xp_amount, created_at, claimed_at')
       .eq('owner_id', owner.studentId ?? owner.userId)
       .eq('context', owner.context)
       .order('created_at', { ascending: false })
@@ -545,7 +576,9 @@ export class TelemetryService {
       this.fail('consultar la experiencia', ledgerResult.error);
 
     // Una fila por ejercicio aprobado: acotada por el tamaño del catálogo
-    const ledger = (ledgerResult.data ?? []) as LedgerRow[];
+    const rows = (ledgerResult.data ?? []) as LedgerRow[];
+    const ledger = rows.filter((row) => row.claimed_at);
+    const pendingRows = rows.filter((row) => !row.claimed_at);
     const recent = ledger.slice(0, limit);
 
     let labels = new Map<string, string>();
@@ -570,6 +603,11 @@ export class TelemetryService {
       studentId: owner.studentId,
       totalXp: ledger.reduce((sum, row) => sum + Number(row.xp_amount), 0),
       rewardsCount: ledger.length,
+      pendingXp: pendingRows.reduce((sum, row) => sum + Number(row.xp_amount), 0),
+      pending: pendingRows.map((row) => ({
+        exerciseId: row.source_id,
+        xp: Number(row.xp_amount),
+      })),
       history: recent.map((row) => ({
         exerciseId: row.source_id,
         label: labels.get(row.source_id) ?? row.source_id,

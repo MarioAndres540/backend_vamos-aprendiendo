@@ -25,6 +25,7 @@ import { QueryTelemetryDto } from './dto/query-telemetry.dto';
 import { QueryXpDto } from './dto/query-xp.dto';
 import { RecordExerciseDto } from './dto/record-exercise.dto';
 import { ImportExercisesDto } from './dto/import-exercises.dto';
+import { ClaimXpDto } from './dto/claim-xp.dto';
 
 // Telemetría de la app de Unity (tablas de las migraciones 20261001_unity_telemetry_cognitive_dashboards y
 // 20261031_exercise_attempts_and_xp). Contrato para Unity: backend/docs/unity-exercises.md
@@ -98,6 +99,34 @@ export class TelemetryController {
     @Body() dto: ImportExercisesDto,
   ) {
     return this.telemetryService.importExercises(user.userId, dto);
+  }
+
+  @Post('xp/claim')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard, ActiveAccessGuard)
+  @Roles(Role.USER, Role.TEST, Role.STUDENT, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Cobrar en el cofre el XP de los ejercicios aprobados',
+    description:
+      'La experiencia se entrega al abrir el cofre en el juego, no al aprobar el ejercicio. Marca como cobrado el XP de esos ejercicios; idempotente.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'claimed (filas cobradas) y xpClaimed',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Datos inválidos o falta studentId',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'El estudiante no está vinculado a la cuenta',
+  })
+  claimXp(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: ClaimXpDto,
+  ) {
+    return this.telemetryService.claimXp(user.userId, dto);
   }
 
   @Get('route-progress')

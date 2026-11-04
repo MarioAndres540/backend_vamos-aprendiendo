@@ -110,8 +110,10 @@ const fixture = (): Record<string, Row[]> => ({
     { estudiante_id: 's1', exercise_id: 'escritura.lo_a', context: 'hogar', institution_id: null },
   ],
   xp_ledger: [
-    { estudiante_id: 's1', context: 'escolar', institution_id: SCHOOL, xp_amount: 10 },
-    { estudiante_id: 's1', context: 'hogar', institution_id: null, xp_amount: 10 },
+    { estudiante_id: 's1', context: 'escolar', institution_id: SCHOOL, xp_amount: 10, claimed_at: daysAgo(0) },
+    { estudiante_id: 's1', context: 'hogar', institution_id: null, xp_amount: 10, claimed_at: daysAgo(0) },
+    // aprobado pero sin cobrar en el cofre: no cuenta
+    { estudiante_id: 's1', context: 'escolar', institution_id: SCHOOL, xp_amount: 10, claimed_at: null },
   ],
   app_sessions: [
     { student_id: 's1', context: 'escolar', institution_id: SCHOOL, started_at: schoolSessionStart, ended_at: plusSeconds(schoolSessionStart, 600), last_heartbeat_at: plusSeconds(schoolSessionStart, 600) },

@@ -442,7 +442,9 @@ export class TeacherService {
                 .select('xp_amount')
                 .eq('estudiante_id', studentId)
                 .eq('context', SCHOOL_CONTEXT)
-                .eq('institution_id', school),
+                .eq('institution_id', school)
+                // Solo cuenta la experiencia ya cobrada en el cofre del juego
+                .not('claimed_at', 'is', null),
             supabase
                 .from('app_sessions')
                 .select('started_at, ended_at, last_heartbeat_at')

@@ -37,6 +37,12 @@ const createSupabaseMock = (
       }
       return builder;
     });
+    builder.update = jest.fn((values: any) => {
+      op = 'update';
+      call = { table, op, filters: [['values', values]] };
+      calls.push(call);
+      return builder;
+    });
     for (const method of [
       'eq',
       'is',
@@ -519,6 +525,62 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
     });
   });
 
+  describe('claimXp (POST /telemetry/xp/claim)', () => {
+    const linked = () => ({
+      'tutor_students:select': [{ data: { id: 'link-1' } }],
+      'students:select': [{ data: { age: 7 } }],
+    });
+
+    it('marca como cobradas solo las filas por cobrar del estudiante y devuelve cuánto XP se cobró', async () => {
+      const mock = setup({
+        ...linked(),
+        'xp_ledger:update': [
+          { data: [{ xp_amount: 10 }, { xp_amount: 10 }], error: null },
+        ],
+      });
+
+      const result = await service.claimXp(USER_ID, {
+        studentId: STUDENT_ID,
+        exerciseIds: ['matematicas.d_4', 'matematicas.d_5'],
+      });
+
+      expect(result).toEqual({
+        studentId: STUDENT_ID,
+        claimed: 2,
+        xpClaimed: 20,
+      });
+      const update = mock.calls.find(
+        (c: any) => c.table === 'xp_ledger' && c.op === 'update',
+      );
+      const filters = update.filters.map((f: any[]) => f[0]);
+      expect(filters).toEqual(expect.arrayContaining(['eq', 'in', 'is']));
+      expect(update.filters).toContainEqual([
+        'is',
+        'claimed_at',
+        null,
+      ]);
+      expect(update.filters).toContainEqual([
+        'in',
+        'source_id',
+        ['matematicas.d_4', 'matematicas.d_5'],
+      ]);
+    });
+
+    it('un estudiante ajeno responde 403 y no toca el libro de XP', async () => {
+      const mock = setup({ 'tutor_students:select': [{ data: null }] });
+
+      await expect(
+        service.claimXp(USER_ID, {
+          studentId: STUDENT_ID,
+          exerciseIds: ['matematicas.d_4'],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(
+        mock.calls.some((c: any) => c.table === 'xp_ledger'),
+      ).toBe(false);
+    });
+  });
+
   describe('getXp (GET /telemetry/xp)', () => {
     const linked = () => ({
       'tutor_students:select': [{ data: { id: 'link-1' } }],
@@ -535,16 +597,26 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
                 source_id: 'escritura.lo_a',
                 xp_amount: 10,
                 created_at: '2026-10-31T15:00:00Z',
+                claimed_at: '2026-11-01T10:00:00Z',
               },
               {
                 source_id: 'matematicas.d_7',
                 xp_amount: 10,
                 created_at: '2026-10-30T15:00:00Z',
+                claimed_at: '2026-11-01T10:00:00Z',
               },
               {
                 source_id: 'matematicas.d_8',
                 xp_amount: 15,
                 created_at: '2026-10-29T15:00:00Z',
+                claimed_at: '2026-11-01T10:00:00Z',
+              },
+              // aprobado pero sin cobrar en el cofre: no cuenta en el total
+              {
+                source_id: 'matematicas.d_9',
+                xp_amount: 10,
+                created_at: '2026-11-01T09:00:00Z',
+                claimed_at: null,
               },
             ],
           },
@@ -563,6 +635,8 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
 
       expect(xp.totalXp).toBe(35);
       expect(xp.rewardsCount).toBe(3);
+      expect(xp.pendingXp).toBe(10);
+      expect(xp.pending).toEqual([{ exerciseId: 'matematicas.d_9', xp: 10 }]);
       expect(xp.history).toEqual([
         {
           exerciseId: 'escritura.lo_a',
@@ -588,6 +662,8 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
         studentId: STUDENT_ID,
         totalXp: 0,
         rewardsCount: 0,
+        pendingXp: 0,
+        pending: [],
         history: [],
       });
     });
