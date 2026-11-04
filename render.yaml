@@ -4,6 +4,8 @@ services:
   - type: web
     runtime: node
     name: vamos-aprendiendo-api
+    # Plan gratuito: se duerme tras 15 min sin peticiones; la primera respuesta después tarda ~1 min
+    plan: free
     region: virginia
     branch: develop
     # --include=dev: nest build necesita las devDependencies y NODE_ENV=production las omitiría
