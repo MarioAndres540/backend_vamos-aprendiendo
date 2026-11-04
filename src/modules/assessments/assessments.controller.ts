@@ -29,11 +29,23 @@ export class AssessmentsController {
   })
   @ApiResponse({ status: 200, description: 'Evaluación procesada y guardada exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos del formulario inválidos' })
+  @ApiResponse({ status: 403, description: 'Falta la autorización de datos sensibles (code: SENSITIVE_CONSENT_REQUIRED)' })
   async submit(
     @CurrentUser() user: any,
     @Body() dto: SubmitAssessmentDto,
   ) {
     return await this.assessmentsService.submitAssessment(user.userId, dto);
+  }
+
+  @Post('skip')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Omitir la evaluación inicial',
+    description: 'Responderla es facultativo (datos sensibles): marca la configuración como completa sin guardar datos.',
+  })
+  @ApiResponse({ status: 200, description: 'Evaluación omitida' })
+  async skip(@CurrentUser() user: any) {
+    return await this.assessmentsService.skipAssessment(user.userId);
   }
 
   @Get('history')

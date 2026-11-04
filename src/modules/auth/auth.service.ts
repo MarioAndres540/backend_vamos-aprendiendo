@@ -15,7 +15,16 @@ import { RegisterDto, PublicRegistrationRole } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { OAuthLoginDto } from './dto/oauth-login.dto';
 import { Role } from '../../common/enums/role.enum';
+import {
+  ConsentMeta,
+  ConsentType,
+  PRIVACY_POLICY_VERSION,
+  buildConsentRows,
+} from '../privacy/privacy.constants';
 import * as crypto from 'crypto';
+
+const OUTDATED_POLICY_MESSAGE =
+  'La política de tratamiento de datos cambió. Recarga la página, revísala y vuelve a aceptarla.';
 
 /** Tipo de perfil usado por el frontend para decidir el destino después del login */
 export type ProfileType =
@@ -56,8 +65,18 @@ export class AuthService {
   // REGISTRO INTEGRAL (TUTOR, DOCENTE, ADULTO)
   // ==========================================
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, consentMeta: ConsentMeta = {}) {
     const supabase = this.supabaseService.getClient();
+
+    // 0. Ley 1581 (spec 0004, PD-POL-03 y PD-CONS-01): versión vigente y autorización por los menores
+    if (dto.policyVersion !== PRIVACY_POLICY_VERSION) {
+      throw new BadRequestException(OUTDATED_POLICY_MESSAGE);
+    }
+    if ((dto.children?.length ?? 0) > 0 && dto.acceptedMinorsData !== true) {
+      throw new BadRequestException(
+        'Para registrar menores debes autorizar, como su representante legal, el tratamiento de sus datos.',
+      );
+    }
 
     // 1. Si se registra como DOCENTE, validar pre-autorización institucional previa
     let teacherPreauthId: string | null = null;
@@ -269,7 +288,32 @@ export class AuthService {
       return failRegistration('licenses', licenseError, 'No pudimos activar tu periodo de prueba. Intenta de nuevo en unos minutos.');
     }
 
-    // 7. Marcar la pre-autorización docente como usada solo cuando todo el registro fue exitoso
+    // 7. Prueba de las autorizaciones (Decreto 1377, art. 8). Sin ella no hay tratamiento: se revierte el registro
+    const { error: consentError } = await supabase.from('privacy_consents').insert(
+      buildConsentRows(
+        userId,
+        [
+          { type: ConsentType.DATA_PROCESSING, granted: true },
+          { type: ConsentType.SENSITIVE_DATA, granted: dto.acceptedSensitiveData === true },
+          ...createdStudentIds.map((studentId) => ({
+            type: ConsentType.MINORS_DATA,
+            granted: true,
+            studentId,
+          })),
+        ],
+        consentMeta,
+      ),
+    );
+
+    if (consentError) {
+      return failRegistration(
+        'privacy_consents',
+        consentError,
+        'No pudimos guardar tu autorización de tratamiento de datos. Intenta de nuevo en unos minutos.',
+      );
+    }
+
+    // 8. Marcar la pre-autorización docente como usada solo cuando todo el registro fue exitoso
     if (teacherPreauthId) {
       const { error: preauthUpdateError } = await supabase
         .from('institution_preauth_teachers')
@@ -448,7 +492,7 @@ export class AuthService {
   // AUTENTICACIÓN SOCIAL (OAuth 2.0)
   // ==========================================
 
-  async loginWithOAuth(dto: OAuthLoginDto) {
+  async loginWithOAuth(dto: OAuthLoginDto, consentMeta: ConsentMeta = {}) {
     const supabase = this.supabaseService.getClient();
 
     // Cliente desechable: la sesión del usuario no debe quedar en el cliente administrativo compartido
@@ -478,6 +522,16 @@ export class AuthService {
     let hasCompletedSetup = false;
 
     if (!profile) {
+      // Ley 1581 (spec 0004, PD-CONS-04): una cuenta nueva solo se crea con la autorización vigente
+      if (dto.acceptedTerms !== true) {
+        throw new BadRequestException(
+          'Para crear tu cuenta debes aceptar los términos y la política de tratamiento de datos.',
+        );
+      }
+      if (dto.policyVersion !== PRIVACY_POLICY_VERSION) {
+        throw new BadRequestException(OUTDATED_POLICY_MESSAGE);
+      }
+
       const metadata = data.user.user_metadata || {};
       const fullName = metadata.full_name || metadata.name || 'Usuario OAuth';
       const [firstName, ...lastNameParts] = fullName.split(' ');
@@ -497,6 +551,13 @@ export class AuthService {
         has_completed_setup: false,
         is_active: true,
       });
+
+      const { error: consentError } = await supabase
+        .from('privacy_consents')
+        .insert(buildConsentRows(userId, [{ type: ConsentType.DATA_PROCESSING, granted: true }], consentMeta));
+      if (consentError) {
+        this.logger.error(`No se guardó la autorización de la cuenta OAuth ${userId}: ${consentError.message}`);
+      }
 
       // Crear licencia de prueba inicial
       await supabase.from('licenses').insert({
@@ -534,7 +595,7 @@ export class AuthService {
     let payload: any;
     try {
       payload = this.jwtService.verify(refreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'default_refresh_secret',
+        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
     } catch (err) {
       throw new UnauthorizedException('Sesión expirada o refresh token inválido');
@@ -685,7 +746,7 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get<string>('JWT_SECRET') || 'default_secret_key_vamos_aprendiendo',
+      secret: this.configService.getOrThrow<string>('JWT_SECRET'),
       expiresIn: (this.configService.get<string>('JWT_EXPIRES_IN') || '15m') as any,
     });
 
@@ -694,7 +755,7 @@ export class AuthService {
     const refreshToken = this.jwtService.sign(
       { ...payload, sid: sessionId, jti: crypto.randomUUID() },
       {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET') || 'default_refresh_secret',
+        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
         expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d') as any,
       },
     );

@@ -7,6 +7,45 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### 🛡️ Protección de datos personales — Ley 1581 de 2012 (2026-11-04)
+Spec: `docs/specs/0004-proteccion-datos-personales.md` (criterios PD-POL, PD-CONS, PD-SENS, PD-ARCO y PD-ADM).
+**Acción requerida:** ejecutar `database/migrations/20261104_data_protection.sql` antes de desplegar. Sin esa migración, el registro falla, porque guarda la prueba de las autorizaciones y si no puede guardarla revierte el registro.
+- **Autorizaciones separadas y con prueba:**
+  - `POST /auth/register` exige `policyVersion`, que debe ser la vigente (`PRIVACY_POLICY_VERSION`). Si hay menores, exige también `acceptedMinorsData: true`. `acceptedSensitiveData` es opcional.
+  - Cada autorización se guarda en `privacy_consents` con su versión, la IP y el navegador. Si no se puede guardar, el registro se revierte.
+  - `POST /students` exige `acceptedMinorsData: true`.
+  - El ingreso con Google ya no crea cuentas sin autorización: pide `acceptedTerms` y `policyVersion`.
+- **Datos sensibles:**
+  - `POST /assessments` responde 403 (`code: SENSITIVE_CONSENT_REQUIRED`) si no está autorizado el tratamiento de datos sensibles.
+  - El nuevo `POST /assessments/skip` permite omitir la evaluación sin guardar datos.
+- **Derechos del titular (`/privacy`):** versión vigente de la política (pública), estado de las autorizaciones, otorgar o revocar los datos sensibles (al revocar se borran las evaluaciones del titular), exportación de los datos de su ecosistema, y radicación y consulta de solicitudes. Los plazos se cuentan en días hábiles: 10 para consultas y 15 para reclamos.
+- **Super administrador (`/admin/data-requests`):** lista con las solicitudes vencidas marcadas, trámite y resolución con respuesta obligatoria. Para la **supresión** se ejecuta la función `suppress_titular_data`, en una sola transacción:
+  - borra los datos del ecosistema del titular;
+  - borra a los menores que quedan sin tutor, sin colegio y sin cuenta propia;
+  - anonimiza y desactiva la cuenta, y cierra su usuario de Auth.
+
+  Los tutores no se borran. Las cuentas escolares responden 409.
+- Nuevo `AuditService` (`admin_audit_log`), que comparte la spec 0003.
+- El cliente de Supabase en memoria para pruebas ahora soporta `update`, `delete` y `rpc`. Pruebas: 264 en verde.
+
+### 🏆 La experiencia se cobra en el cofre del juego (2026-11-03)
+- Migración `database/migrations/20261103_xp_claims.sql`: `xp_ledger.claimed_at` (NULL = aprobado pero por cobrar). **Aplicar antes de desplegar.** No rellena lo anterior: la app declara como cobrado lo que el jugador ya había cobrado; si prefieres que todo lo anterior cuente ya, el archivo trae el `UPDATE` comentado.
+- `POST /telemetry/xp/claim` (`ClaimXpDto`: `studentId?`, `exerciseIds[]`): marca como cobradas las filas por cobrar del propio estudiante y ambiente; idempotente. Responde `claimed` y `xpClaimed`.
+- `GET /telemetry/xp`: `totalXp`, `rewardsCount` e `history` cuentan solo lo cobrado; nuevos `pendingXp` y `pending[]` con lo aprobado sin cobrar. El XP del estudiante en el seguimiento del profesor también cuenta solo lo cobrado.
+- Las funciones SQL de registro e importación siguen creando la fila de XP al aprobar (sin cambios); solo cambia cuándo cuenta. Pruebas: 233 en verde (cliente en memoria con `not is`).
+
+### 🔒 Seguridad — Endurecimiento antes de producción (2026-11-03)
+Spec: `docs/specs/0002-endurecimiento-seguridad.md`.
+- **Secretos JWT sin valor por defecto**: el código ya no tiene claves de respaldo. Sin `JWT_SECRET`, `JWT_REFRESH_SECRET` o `SUPABASE_URL` el backend no arranca. En producción además exige secretos de al menos 32 caracteres y distintos entre sí (`src/config/env.validation.ts`).
+- **Límite de intentos** (`@nestjs/throttler`), por IP y por minuto: login 10, registro 5, OAuth 10, renovación de sesión 30. Al pasarlo responde 429 "Demasiados intentos…". El resto de la API (telemetría de Unity) no tiene límite.
+- **Cabeceras de seguridad** con `helmet` (nosniff, HSTS, X-Frame-Options) y sin `X-Powered-By`.
+- **IP real detrás de Render**: en producción se confía en un solo proxy (`trust proxy = 1`), para que el límite no se salte falseando `X-Forwarded-For`.
+- La configuración HTTP (prefijo, validación, CORS, cabeceras) pasa a `src/bootstrap.ts`, que usan `main.ts` y las pruebas.
+- **Dependencias**: se corrigen las vulnerabilidades altas y críticas de producción (`proxy-addr`, `body-parser`, `qs`; `multer` 2.5.0 vía `overrides`). Quedan 2 moderadas en `@nestjs/swagger`, que en producción está apagado.
+- `render.yaml`: `plan: free`.
+- **Acción requerida en el despliegue:** usar secretos JWT nuevos en producción (Render los genera con `generateValue`) y no reutilizar los de desarrollo.
+- Pruebas: `env.validation.spec.ts`, `bootstrap.spec.ts`, `auth-rate-limit.spec.ts` (231 en total, todas pasan).
+
 ### 🧑‍🏫 Nuevo — Módulo del profesor y progreso separado entre hogar y colegio (2026-11-02)
 Spec: `docs/specs/0001-modulo-profesor.md` (criterios CTX, TACC, TSUM y TPROG; cada prueba lleva el ID del criterio).
 **Acción requerida:** ejecutar `20261102_progress_context.sql` y `20261102_data_access_log.sql` (ya aplicadas en desarrollo).

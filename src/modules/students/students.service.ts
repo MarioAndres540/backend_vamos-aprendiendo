@@ -6,6 +6,11 @@
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import {
+  ConsentMeta,
+  ConsentType,
+  buildConsentRows,
+} from '../privacy/privacy.constants';
 import { CreateStudentSetupDto } from './dto/create-student-setup.dto';
 import { CreateChildItemDto } from '../auth/dto/register.dto';
 import { findOwnStudentId } from './student-access';
@@ -105,7 +110,11 @@ export class StudentsService {
    * de prueba de 14 días, igual que en el registro. Si algo falla se revierte lo creado.
    * Después el frontend lo envía al formulario inicial con su studentId.
    */
-  async create(userId: string, dto: CreateChildItemDto): Promise<MyStudent> {
+  async create(
+    userId: string,
+    dto: CreateChildItemDto,
+    consentMeta: ConsentMeta = {},
+  ): Promise<MyStudent> {
     const supabase = this.supabaseService.getClient();
     const childName = `${dto.firstName} ${dto.lastName}`.trim();
 
@@ -186,6 +195,26 @@ export class StudentsService {
       );
     }
 
+    // Ley 1581 (spec 0004, PD-CONS-03): prueba de la autorización del representante legal para este menor
+    const { error: consentError } = await supabase
+      .from('privacy_consents')
+      .insert(
+        buildConsentRows(
+          userId,
+          [{ type: ConsentType.MINORS_DATA, granted: true, studentId }],
+          consentMeta,
+        ),
+      );
+    if (consentError) {
+      return this.failCreate(
+        userId,
+        studentId,
+        'privacy_consents',
+        consentError,
+        childName,
+      );
+    }
+
     return this.findOne(userId, studentId);
   }
 
@@ -207,6 +236,7 @@ export class StudentsService {
       const supabase = this.supabaseService.getClient();
       // Licencias, vínculo y matrícula primero, por si las llaves foráneas no borran en cascada
       for (const table of [
+        'privacy_consents',
         'licenses',
         'student_enrollments',
         'tutor_students',

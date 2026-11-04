@@ -2,13 +2,18 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
 import { AssessmentsService } from './assessments.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { PrivacyService } from '../privacy/privacy.service';
 import { AssessmentTarget } from './dto/submit-assessment.dto';
 
 describe('AssessmentsService', () => {
   let service: AssessmentsService;
   let supabaseMock: any;
+  let privacyMock: { hasSensitiveDataConsent: jest.Mock };
 
   beforeEach(async () => {
+    // Por defecto la persona autorizó los datos sensibles (spec 0004)
+    privacyMock = { hasSensitiveDataConsent: jest.fn().mockResolvedValue(true) };
+
     supabaseMock = {
       getClient: jest.fn(),
     };
@@ -20,6 +25,7 @@ describe('AssessmentsService', () => {
           provide: SupabaseService,
           useValue: supabaseMock,
         },
+        { provide: PrivacyService, useValue: privacyMock },
       ],
     }).compile();
 
@@ -28,6 +34,47 @@ describe('AssessmentsService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  // Ley 1581 (spec 0004, PD-SENS)
+  describe('datos sensibles', () => {
+    const answers = Array.from({ length: 5 }, (_, i) => ({
+      questionId: i + 1,
+      dimension: 'atencion',
+      score: 1,
+    }));
+
+    it('PD-SENS-01: sin autorización de datos sensibles responde 403 con código y no guarda nada', async () => {
+      privacyMock.hasSensitiveDataConsent.mockResolvedValue(false);
+      const from = jest.fn();
+      supabaseMock.getClient.mockReturnValue({ from });
+
+      const promise = service.submitAssessment('user-1', {
+        targetType: AssessmentTarget.ADULTO,
+        answers,
+      });
+
+      await expect(promise).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(promise).rejects.toMatchObject({
+        response: { code: 'SENSITIVE_CONSENT_REQUIRED' },
+      });
+      expect(from).not.toHaveBeenCalled();
+    });
+
+    it('PD-SENS-02: omitir la evaluación marca la configuración completa sin guardar respuestas', async () => {
+      const eq = jest.fn().mockResolvedValue({ error: null });
+      const update = jest.fn().mockReturnValue({ eq });
+      const from = jest.fn().mockReturnValue({ update });
+      supabaseMock.getClient.mockReturnValue({ from });
+
+      await expect(service.skipAssessment('user-1')).resolves.toEqual({ skipped: true });
+      expect(from).toHaveBeenCalledTimes(1);
+      expect(from).toHaveBeenCalledWith('profiles');
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ has_completed_setup: true }),
+      );
+      expect(eq).toHaveBeenCalledWith('id', 'user-1');
+    });
   });
 
   it('should calculate score and determine low risk for kids when score is <= 15', async () => {

@@ -16,7 +16,7 @@ type QueryResult = { data?: any; error?: any };
  * (si la cola se vacía, responde sin datos). Registra operaciones y filtros.
  */
 const createSupabaseMock = (queues: Record<string, QueryResult[]> = {}) => {
-  const calls: { table: string; op: string; filters: any[][] }[] = [];
+  const calls: { table: string; op: string; payload?: any; filters: any[][] }[] = [];
 
   const from = jest.fn((table: string) => {
     let op = '';
@@ -27,10 +27,10 @@ const createSupabaseMock = (queues: Record<string, QueryResult[]> = {}) => {
       );
     const builder: any = {};
     for (const method of ['insert', 'update', 'upsert', 'delete', 'select']) {
-      builder[method] = jest.fn(() => {
+      builder[method] = jest.fn((payload?: any) => {
         if (!op) {
           op = method;
-          call = { table, op, filters: [] };
+          call = { table, op, payload, filters: [] };
           calls.push(call);
         }
         return builder;
@@ -413,7 +413,10 @@ describe('StudentsService.findMine (hijos del tutor)', () => {
         ],
       });
 
-      const student = await service.create('tutor-1', newChild);
+      const student = await service.create('tutor-1', newChild, {
+        ip: '203.0.113.7',
+        userAgent: 'Mozilla/5.0',
+      });
 
       expect(student).toMatchObject({ id: 'est-9', firstName: 'Sara' });
       const inserts = mock.calls
@@ -424,6 +427,18 @@ describe('StudentsService.findMine (hijos del tutor)', () => {
         'tutor_students',
         'student_enrollments',
         'licenses',
+        'privacy_consents',
+      ]);
+      // Spec 0004, PD-CONS-03: prueba de la autorización del representante legal para este menor
+      const consent = mock.calls.find((c) => c.table === 'privacy_consents');
+      expect(consent?.payload).toEqual([
+        expect.objectContaining({
+          profile_id: 'tutor-1',
+          student_id: 'est-9',
+          consent_type: 'datos_menores',
+          granted: true,
+          ip_address: '203.0.113.7',
+        }),
       ]);
     });
 
@@ -455,6 +470,7 @@ describe('StudentsService.findMine (hijos del tutor)', () => {
         .filter((c) => c.op === 'delete')
         .map((c) => c.table);
       expect(deletes).toEqual([
+        'privacy_consents',
         'licenses',
         'student_enrollments',
         'tutor_students',

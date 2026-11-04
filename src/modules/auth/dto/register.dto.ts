@@ -123,10 +123,31 @@ export class RegisterDto {
   @Matches(/^\+?[0-9]{7,15}$/, { message: 'Número de teléfono inválido' })
   phone: string;
 
-  @ApiProperty({ example: true, description: 'Aceptación de términos y condiciones' })
+  @ApiProperty({ example: true, description: 'Autorización del tratamiento de datos personales y términos (obligatoria)' })
   @IsBoolean()
-  @Equals(true, { message: 'Debes aceptar los términos y condiciones' })
+  @Equals(true, { message: 'Debes aceptar los términos y la política de tratamiento de datos' })
   acceptedTerms: boolean;
+
+  // Ley 1581 (spec 0004): versión de la política que se le mostró a la persona
+  @ApiProperty({ example: '2026-11-04', description: 'Versión de la política de tratamiento aceptada' })
+  @IsString({ message: 'Falta la versión de la política de tratamiento de datos' })
+  policyVersion: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Autorización como representante legal para tratar los datos de los menores (obligatoria si registra menores)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptedMinorsData?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Autorización facultativa de datos sensibles (evaluación inicial)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptedSensitiveData?: boolean;
 
   @ApiProperty({ example: 'Password123!', description: 'Contraseña segura (mínimo 6 caracteres)' })
   @IsString()

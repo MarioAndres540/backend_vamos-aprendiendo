@@ -22,7 +22,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
-import { CreateChildItemDto } from '../auth/dto/register.dto';
+import { CreateChildDto } from './dto/create-child.dto';
+import { ConsentMetaParam } from '../privacy/consent-meta.decorator';
+import type { ConsentMeta } from '../privacy/privacy.constants';
 
 @ApiTags('Students')
 @Controller('students')
@@ -94,14 +96,18 @@ export class StudentsController {
       'Crea el estudiante, lo vincula a la cuenta, lo matricula si tiene colegio y le asigna una licencia de prueba de 14 días. Después se debe llenar su formulario inicial (POST /assessments con studentId).',
   })
   @ApiResponse({ status: 201, description: 'Estudiante creado y vinculado' })
-  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos o falta la autorización del representante legal' })
   @ApiResponse({
     status: 403,
     description: 'El perfil no puede agregar estudiantes',
   })
   @ApiResponse({ status: 409, description: 'Documento ya registrado' })
-  async create(@CurrentUser() user: any, @Body() dto: CreateChildItemDto) {
-    return await this.studentsService.create(user.userId, dto);
+  async create(
+    @CurrentUser() user: any,
+    @Body() dto: CreateChildDto,
+    @ConsentMetaParam() consentMeta: ConsentMeta,
+  ) {
+    return await this.studentsService.create(user.userId, dto, consentMeta);
   }
 
   // Debe ir después de las rutas fijas ('mine', 'setup-status') para no capturarlas

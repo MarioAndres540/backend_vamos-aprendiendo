@@ -4,6 +4,8 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { PrivacyService } from '../privacy/privacy.service';
+import { SENSITIVE_CONSENT_REQUIRED } from '../privacy/privacy.constants';
 import {
   SubmitAssessmentDto,
   AssessmentTarget,
@@ -22,7 +24,10 @@ export interface AssessmentResult {
 
 @Injectable()
 export class AssessmentsService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly privacyService: PrivacyService,
+  ) {}
 
   /**
    * Procesa las respuestas del formulario inicial, calcula el score ponderado,
@@ -33,6 +38,16 @@ export class AssessmentsService {
     dto: SubmitAssessmentDto,
   ): Promise<AssessmentResult> {
     const supabase = this.supabaseService.getClient();
+
+    // Las respuestas son datos sensibles (salud): sin autorización vigente no se guardan (Ley 1581, spec 0004 PD-SENS-01)
+    if (!(await this.privacyService.hasSensitiveDataConsent(evaluatorUserId))) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: SENSITIVE_CONSENT_REQUIRED,
+        message:
+          'Para guardar la evaluación necesitamos tu autorización para tratar datos sensibles. Responderla es facultativo: puedes omitirla.',
+      });
+    }
 
     // 0. Un formulario de un estudiante solo lo puede llenar su tutor
     if (dto.studentId) {
@@ -138,6 +153,25 @@ export class AssessmentsService {
       targetType: dto.targetType,
       createdAt: assessmentRecord.created_at,
     };
+  }
+
+  /**
+   * Omitir la evaluación inicial (spec 0004 PD-SENS-02): responderla es facultativo, así que se marca la
+   * configuración como completa sin guardar ningún dato.
+   */
+  async skipAssessment(userId: string): Promise<{ skipped: true }> {
+    const { error } = await this.supabaseService
+      .getClient()
+      .from('profiles')
+      .update({ has_completed_setup: true, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (error) {
+      throw new InternalServerErrorException(
+        'No pudimos omitir la evaluación. Intenta de nuevo.',
+      );
+    }
+    return { skipped: true };
   }
 
   /**

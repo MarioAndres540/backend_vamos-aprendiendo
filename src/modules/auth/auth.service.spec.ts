@@ -1,11 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService, audienceForProfile } from './auth.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PublicRegistrationRole, RegisterDto } from './dto/register.dto';
 import { Role } from '../../common/enums/role.enum';
+import { PRIVACY_POLICY_VERSION } from '../privacy/privacy.constants';
 
 type QueryResult = { data: any; error: any; count?: number };
 
@@ -14,12 +20,18 @@ type QueryResult = { data: any; error: any; count?: number };
  * (ej. 'profiles:insert', 'students:delete'). Registra las operaciones para verificarlas.
  */
 const createSupabaseMock = (results: Record<string, QueryResult> = {}) => {
-  const calls: { table: string; op: string; payload?: any; filters: [string, any][] }[] = [];
+  const calls: {
+    table: string;
+    op: string;
+    payload?: any;
+    filters: [string, any][];
+  }[] = [];
 
   const from = jest.fn((table: string) => {
     let op = '';
     let call: (typeof calls)[number] | null = null;
-    const resolve = () => Promise.resolve(results[`${table}:${op}`] ?? { data: null, error: null });
+    const resolve = () =>
+      Promise.resolve(results[`${table}:${op}`] ?? { data: null, error: null });
     const builder: any = {};
     for (const method of ['insert', 'update', 'delete', 'select']) {
       builder[method] = jest.fn((payload?: any) => {
@@ -38,13 +50,18 @@ const createSupabaseMock = (results: Record<string, QueryResult> = {}) => {
       });
     }
     builder.single = jest.fn(resolve);
-    builder.then = (onFulfilled: any, onRejected: any) => resolve().then(onFulfilled, onRejected);
+    builder.then = (onFulfilled: any, onRejected: any) =>
+      resolve().then(onFulfilled, onRejected);
     return builder;
   });
 
   const auth = {
-    signUp: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
-    admin: { deleteUser: jest.fn().mockResolvedValue({ data: {}, error: null }) },
+    signUp: jest
+      .fn()
+      .mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
+    admin: {
+      deleteUser: jest.fn().mockResolvedValue({ data: {}, error: null }),
+    },
   };
 
   return { client: { from, auth }, calls };
@@ -61,6 +78,8 @@ const baseDto = (): RegisterDto =>
     email: 'tutor@ejemplo.com',
     phone: '3158417577',
     acceptedTerms: true,
+    policyVersion: PRIVACY_POLICY_VERSION,
+    acceptedMinorsData: true,
     password: 'Clave123.',
     children: [
       {
@@ -77,7 +96,10 @@ const baseDto = (): RegisterDto =>
 
 describe('AuthService - register', () => {
   let service: AuthService;
-  let supabaseServiceMock: { getClient: jest.Mock; createAuthClient: jest.Mock };
+  let supabaseServiceMock: {
+    getClient: jest.Mock;
+    createAuthClient: jest.Mock;
+  };
   let authClientMock: { auth: { signUp: jest.Mock } };
 
   const setup = async (results: Record<string, QueryResult> = {}) => {
@@ -104,10 +126,19 @@ describe('AuthService - register', () => {
           provide: JwtService,
           useValue: {
             sign: jest.fn().mockReturnValue('signed-token'),
-            verify: jest.fn().mockReturnValue({ sub: 'user-1', email: 'tutor@ejemplo.com' }),
+            verify: jest
+              .fn()
+              .mockReturnValue({ sub: 'user-1', email: 'tutor@ejemplo.com' }),
           },
         },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
+        {
+          provide: ConfigService,
+          // Los secretos JWT ya no tienen valor por defecto en el código (spec 0002)
+          useValue: {
+            get: jest.fn().mockReturnValue(undefined),
+            getOrThrow: jest.fn((key: string) => `test-${key}`),
+          },
+        },
       ],
     }).compile();
 
@@ -131,23 +162,115 @@ describe('AuthService - register', () => {
     expect(result.message).toContain('Inicia sesión');
     expect(mock.calls.some((c) => c.table === 'refresh_tokens')).toBe(false);
 
-    const profileInsert = mock.calls.find((c) => c.table === 'profiles' && c.op === 'insert');
+    const profileInsert = mock.calls.find(
+      (c) => c.table === 'profiles' && c.op === 'insert',
+    );
     expect(profileInsert?.payload).not.toHaveProperty('birth_date');
-    expect(mock.calls.some((c) => c.table === 'tutor_students' && c.op === 'insert')).toBe(true);
+    expect(
+      mock.calls.some((c) => c.table === 'tutor_students' && c.op === 'insert'),
+    ).toBe(true);
     expect(mock.client.auth.admin.deleteUser).not.toHaveBeenCalled();
     // El alta en Auth se hace con el cliente desechable, no con el administrativo
     expect(supabaseServiceMock.createAuthClient).toHaveBeenCalledTimes(1);
+  });
+
+  // Ley 1581 (spec 0004)
+  describe('autorizaciones de tratamiento de datos', () => {
+    it('PD-POL-03: con una versión de la política distinta a la vigente responde 400 y no crea la cuenta', async () => {
+      const mock = await setup();
+
+      await expect(
+        service.register({ ...baseDto(), policyVersion: '2020-01-01' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mock.client.auth.signUp).not.toHaveBeenCalled();
+    });
+
+    it('PD-CONS-01: con menores y sin la autorización del representante legal responde 400 y no crea la cuenta', async () => {
+      const mock = await setup();
+
+      await expect(
+        service.register({ ...baseDto(), acceptedMinorsData: false }),
+      ).rejects.toThrow(/representante legal/);
+      expect(mock.client.auth.signUp).not.toHaveBeenCalled();
+    });
+
+    it('un adulto sin menores no necesita la autorización de menores', async () => {
+      const mock = await setup();
+
+      await service.register({
+        ...baseDto(),
+        children: undefined,
+        acceptedMinorsData: undefined,
+      });
+      expect(mock.client.auth.signUp).toHaveBeenCalled();
+    });
+
+    it('PD-CONS-02: guarda la prueba de cada autorización con la versión, la IP y el navegador', async () => {
+      const mock = await setup({
+        'students:insert': { data: { id: 'student-1' }, error: null },
+      });
+
+      await service.register(
+        { ...baseDto(), acceptedSensitiveData: true },
+        { ip: '203.0.113.7', userAgent: 'Mozilla/5.0' },
+      );
+
+      const consent = mock.calls.find(
+        (c) => c.table === 'privacy_consents' && c.op === 'insert',
+      );
+      const rows = consent?.payload as Record<string, unknown>[];
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ consent_type: 'tratamiento_datos', granted: true, student_id: null }),
+          expect.objectContaining({ consent_type: 'datos_sensibles', granted: true }),
+          expect.objectContaining({ consent_type: 'datos_menores', granted: true, student_id: 'student-1' }),
+        ]),
+      );
+      expect(rows.every((r) => r.policy_version === PRIVACY_POLICY_VERSION)).toBe(true);
+      expect(rows.every((r) => r.ip_address === '203.0.113.7' && r.user_agent === 'Mozilla/5.0')).toBe(true);
+    });
+
+    it('PD-D1: la autorización de datos sensibles es facultativa y queda registrada como no otorgada', async () => {
+      const mock = await setup({
+        'students:insert': { data: { id: 'student-1' }, error: null },
+      });
+
+      await service.register(baseDto());
+
+      const rows = mock.calls.find((c) => c.table === 'privacy_consents')
+        ?.payload as Record<string, unknown>[];
+      expect(rows).toContainEqual(
+        expect.objectContaining({ consent_type: 'datos_sensibles', granted: false }),
+      );
+    });
+
+    it('si no se puede guardar la prueba de la autorización, revierte el registro', async () => {
+      const mock = await setup({
+        'students:insert': { data: { id: 'student-1' }, error: null },
+        'privacy_consents:insert': { data: null, error: { code: '42P01', message: 'no existe' } },
+      });
+
+      await expect(service.register(baseDto())).rejects.toThrow(
+        /autorización de tratamiento de datos/,
+      );
+      expect(mock.client.auth.admin.deleteUser).toHaveBeenCalledWith('user-1');
+    });
   });
 
   it('responde 409 con mensaje claro si el correo ya está registrado en Auth', async () => {
     const mock = await setup();
     mock.client.auth.signUp.mockResolvedValue({
       data: { user: null },
-      error: { message: 'User already registered', code: 'user_already_exists' },
+      error: {
+        message: 'User already registered',
+        code: 'user_already_exists',
+      },
     });
 
     await expect(service.register(baseDto())).rejects.toThrow(
-      new ConflictException('Este correo ya está registrado. Inicia sesión o recupera tu contraseña.'),
+      new ConflictException(
+        'Este correo ya está registrado. Inicia sesión o recupera tu contraseña.',
+      ),
     );
     expect(mock.calls.some((c) => c.table === 'profiles')).toBe(false);
   });
@@ -156,40 +279,63 @@ describe('AuthService - register', () => {
     const mock = await setup({
       'profiles:insert': {
         data: null,
-        error: { code: 'PGRST204', message: "Could not find the 'birth_date' column of 'profiles' in the schema cache" },
+        error: {
+          code: 'PGRST204',
+          message:
+            "Could not find the 'birth_date' column of 'profiles' in the schema cache",
+        },
       },
     });
 
     const promise = service.register(baseDto());
 
     await expect(promise).rejects.toBeInstanceOf(InternalServerErrorException);
-    await expect(promise).rejects.toThrow('No pudimos crear tu perfil. Intenta de nuevo en unos minutos.');
+    await expect(promise).rejects.toThrow(
+      'No pudimos crear tu perfil. Intenta de nuevo en unos minutos.',
+    );
     expect(mock.client.auth.admin.deleteUser).toHaveBeenCalledWith('user-1');
-    expect(mock.calls.some((c) => c.table === 'profiles' && c.op === 'delete')).toBe(true);
+    expect(
+      mock.calls.some((c) => c.table === 'profiles' && c.op === 'delete'),
+    ).toBe(true);
   });
 
   it('responde 409 si el documento ya existe (violación de unicidad) y revierte el registro', async () => {
     const mock = await setup({
-      'profiles:insert': { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
+      'profiles:insert': {
+        data: null,
+        error: {
+          code: '23505',
+          message: 'duplicate key value violates unique constraint',
+        },
+      },
     });
 
-    await expect(service.register(baseDto())).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.register(baseDto())).rejects.toBeInstanceOf(
+      ConflictException,
+    );
     expect(mock.client.auth.admin.deleteUser).toHaveBeenCalledWith('user-1');
   });
 
   it('revierte estudiantes, perfil y usuario si falla el vínculo tutor-estudiante', async () => {
     const mock = await setup({
       'students:insert': { data: { id: 'student-1' }, error: null },
-      'tutor_students:insert': { data: null, error: { code: '42501', message: 'permission denied' } },
+      'tutor_students:insert': {
+        data: null,
+        error: { code: '42501', message: 'permission denied' },
+      },
     });
 
     await expect(service.register(baseDto())).rejects.toThrow(
       'No pudimos registrar al estudiante Matias Jaramillo. Revisa sus datos e intenta de nuevo.',
     );
 
-    const studentDelete = mock.calls.find((c) => c.table === 'students' && c.op === 'delete');
+    const studentDelete = mock.calls.find(
+      (c) => c.table === 'students' && c.op === 'delete',
+    );
     expect(studentDelete).toBeDefined();
-    expect(mock.calls.some((c) => c.table === 'profiles' && c.op === 'delete')).toBe(true);
+    expect(
+      mock.calls.some((c) => c.table === 'profiles' && c.op === 'delete'),
+    ).toBe(true);
     expect(mock.client.auth.admin.deleteUser).toHaveBeenCalledWith('user-1');
     // La licencia del titular no se crea si el registro falló antes
     expect(mock.calls.filter((c) => c.table === 'licenses').length).toBe(0);
@@ -201,25 +347,50 @@ describe('AuthService - register', () => {
       [Role.TEACHER, 'profesor'],
       [Role.TEST, 'tester'],
       [Role.STUDENT, 'estudiante'],
-    ])('el rol %s se resuelve como %s sin consultar la base', async (role, expected) => {
-      const mock = await setup();
-      await expect(service.resolveProfileType('user-1', role)).resolves.toBe(expected);
-      expect(mock.client.from).not.toHaveBeenCalled();
-    });
+    ])(
+      'el rol %s se resuelve como %s sin consultar la base',
+      async (role, expected) => {
+        const mock = await setup();
+        await expect(service.resolveProfileType('user-1', role)).resolves.toBe(
+          expected,
+        );
+        expect(mock.client.from).not.toHaveBeenCalled();
+      },
+    );
 
     it('un usuario con estudiantes vinculados es tutor', async () => {
-      await setup({ 'tutor_students:select': { data: null, error: null, count: 2 } as QueryResult });
-      await expect(service.resolveProfileType('user-1', Role.USER)).resolves.toBe('tutor');
+      await setup({
+        'tutor_students:select': {
+          data: null,
+          error: null,
+          count: 2,
+        },
+      });
+      await expect(
+        service.resolveProfileType('user-1', Role.USER),
+      ).resolves.toBe('tutor');
     });
 
     it('un usuario sin estudiantes vinculados es adulto', async () => {
-      await setup({ 'tutor_students:select': { data: null, error: null, count: 0 } as QueryResult });
-      await expect(service.resolveProfileType('user-1', Role.USER)).resolves.toBe('adulto');
+      await setup({
+        'tutor_students:select': {
+          data: null,
+          error: null,
+          count: 0,
+        },
+      });
+      await expect(
+        service.resolveProfileType('user-1', Role.USER),
+      ).resolves.toBe('adulto');
     });
 
     it('si la consulta falla, no bloquea el login y lo trata como adulto', async () => {
-      await setup({ 'tutor_students:select': { data: null, error: { message: 'timeout' } } });
-      await expect(service.resolveProfileType('user-1', Role.USER)).resolves.toBe('adulto');
+      await setup({
+        'tutor_students:select': { data: null, error: { message: 'timeout' } },
+      });
+      await expect(
+        service.resolveProfileType('user-1', Role.USER),
+      ).resolves.toBe('adulto');
     });
   });
 
@@ -231,58 +402,111 @@ describe('AuthService - register', () => {
       ['tester', null],
       ['profesor', null],
       ['admin', null],
-    ] as const)('el perfil %s corresponde al público %s', (profileType, expected) => {
-      expect(audienceForProfile(profileType)).toBe(expected);
-    });
+    ] as const)(
+      'el perfil %s corresponde al público %s',
+      (profileType, expected) => {
+        expect(audienceForProfile(profileType)).toBe(expected);
+      },
+    );
 
     it('el login informa el tipo de perfil y el público (tutor → niños)', async () => {
       await setup({
         'profiles:select': {
-          data: { role: Role.USER, trial_ends_at: null, is_active: true, has_completed_setup: true, first_name: 'Marisol', last_name: 'Villegas', institution_id: null },
+          data: {
+            role: Role.USER,
+            trial_ends_at: null,
+            is_active: true,
+            has_completed_setup: true,
+            first_name: 'Marisol',
+            last_name: 'Villegas',
+            institution_id: null,
+          },
           error: null,
         },
-        'tutor_students:select': { data: null, error: null, count: 1 } as QueryResult,
+        'tutor_students:select': {
+          data: null,
+          error: null,
+          count: 1,
+        },
       });
       supabaseServiceMock.createAuthClient.mockReturnValue({
         auth: {
-          signInWithPassword: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1', email: 'tutor@ejemplo.com' } }, error: null }),
+          signInWithPassword: jest.fn().mockResolvedValue({
+            data: { user: { id: 'user-1', email: 'tutor@ejemplo.com' } },
+            error: null,
+          }),
         },
       });
 
-      const response = await service.login({ email: 'tutor@ejemplo.com', password: 'Clave123.' });
+      const response = await service.login({
+        email: 'tutor@ejemplo.com',
+        password: 'Clave123.',
+      });
 
-      expect(response).toMatchObject({ profileType: 'tutor', audience: 'ninos' });
-      expect(response.user).toMatchObject({ profileType: 'tutor', audience: 'ninos' });
+      expect(response).toMatchObject({
+        profileType: 'tutor',
+        audience: 'ninos',
+      });
+      expect(response.user).toMatchObject({
+        profileType: 'tutor',
+        audience: 'ninos',
+      });
     });
 
     it('al renovar la sesión devuelve de nuevo el tipo de perfil y el público (adulto → adultos)', async () => {
       await setup({
         'refresh_tokens:select': {
-          data: { id: 'rt-3', is_revoked: false, session_id: 'sesion-unity', expires_at: new Date(Date.now() + 3600_000).toISOString() },
+          data: {
+            id: 'rt-3',
+            is_revoked: false,
+            session_id: 'sesion-unity',
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          },
           error: null,
         },
         'profiles:select': {
-          data: { role: Role.USER, trial_ends_at: null, is_active: true, has_completed_setup: true },
+          data: {
+            role: Role.USER,
+            trial_ends_at: null,
+            is_active: true,
+            has_completed_setup: true,
+          },
           error: null,
         },
-        'tutor_students:select': { data: null, error: null, count: 0 } as QueryResult,
+        'tutor_students:select': {
+          data: null,
+          error: null,
+          count: 0,
+        },
       });
 
       const response = await service.refreshTokens('token-valido');
 
-      expect(response).toMatchObject({ profileType: 'adulto', audience: 'adultos' });
-      expect(response.user).toMatchObject({ profileType: 'adulto', audience: 'adultos' });
+      expect(response).toMatchObject({
+        profileType: 'adulto',
+        audience: 'adultos',
+      });
+      expect(response.user).toMatchObject({
+        profileType: 'adulto',
+        audience: 'adultos',
+      });
       expect(response.accessToken).toBe('signed-token');
     });
   });
 
   describe('sesiones simultáneas (app de Unity y web)', () => {
-    const futureDate = () => new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const futureDate = () =>
+      new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
     it('un token reutilizado cierra solo su sesión, no las demás del usuario', async () => {
       const mock = await setup({
         'refresh_tokens:select': {
-          data: { id: 'rt-1', is_revoked: true, session_id: 'sesion-web', expires_at: futureDate() },
+          data: {
+            id: 'rt-1',
+            is_revoked: true,
+            session_id: 'sesion-web',
+            expires_at: futureDate(),
+          },
           error: null,
         },
       });
@@ -291,28 +515,44 @@ describe('AuthService - register', () => {
         'Tu sesión en este dispositivo se cerró por seguridad. Inicia sesión de nuevo.',
       );
 
-      const revocations = mock.calls.filter((c) => c.table === 'refresh_tokens' && c.op === 'update');
+      const revocations = mock.calls.filter(
+        (c) => c.table === 'refresh_tokens' && c.op === 'update',
+      );
       expect(revocations).toHaveLength(1);
       expect(revocations[0].filters).toEqual([['session_id', 'sesion-web']]);
       // Nunca se revocan todas las sesiones del usuario
-      expect(revocations[0].filters.some(([column]) => column === 'user_id')).toBe(false);
+      expect(
+        revocations[0].filters.some(([column]) => column === 'user_id'),
+      ).toBe(false);
     });
 
     it('al renovar, el token nuevo conserva la misma sesión', async () => {
       const mock = await setup({
         'refresh_tokens:select': {
-          data: { id: 'rt-2', is_revoked: false, session_id: 'sesion-unity', expires_at: futureDate() },
+          data: {
+            id: 'rt-2',
+            is_revoked: false,
+            session_id: 'sesion-unity',
+            expires_at: futureDate(),
+          },
           error: null,
         },
         'profiles:select': {
-          data: { role: Role.USER, trial_ends_at: null, is_active: true, has_completed_setup: true },
+          data: {
+            role: Role.USER,
+            trial_ends_at: null,
+            is_active: true,
+            has_completed_setup: true,
+          },
           error: null,
         },
       });
 
       await service.refreshTokens('token-valido');
 
-      const insert = mock.calls.find((c) => c.table === 'refresh_tokens' && c.op === 'insert');
+      const insert = mock.calls.find(
+        (c) => c.table === 'refresh_tokens' && c.op === 'insert',
+      );
       expect(insert?.payload.session_id).toBe('sesion-unity');
     });
 
@@ -321,14 +561,28 @@ describe('AuthService - register', () => {
       const jwt = (service as any).jwtService;
       jwt.sign.mockImplementation((payload: any) => JSON.stringify(payload));
 
-      const web = await (service as any).generateTokenPair('user-1', 'tutor@ejemplo.com', Role.USER);
-      const unity = await (service as any).generateTokenPair('user-1', 'tutor@ejemplo.com', Role.USER);
+      const web = await (service as any).generateTokenPair(
+        'user-1',
+        'tutor@ejemplo.com',
+        Role.USER,
+      );
+      const unity = await (service as any).generateTokenPair(
+        'user-1',
+        'tutor@ejemplo.com',
+        Role.USER,
+      );
 
-      const inserts = mock.calls.filter((c) => c.table === 'refresh_tokens' && c.op === 'insert');
+      const inserts = mock.calls.filter(
+        (c) => c.table === 'refresh_tokens' && c.op === 'insert',
+      );
       expect(inserts).toHaveLength(2);
-      expect(inserts[0].payload.session_id).not.toBe(inserts[1].payload.session_id);
+      expect(inserts[0].payload.session_id).not.toBe(
+        inserts[1].payload.session_id,
+      );
       expect(web.refreshToken).not.toBe(unity.refreshToken);
-      expect(inserts[0].payload.token_hash).not.toBe(inserts[1].payload.token_hash);
+      expect(inserts[0].payload.token_hash).not.toBe(
+        inserts[1].payload.token_hash,
+      );
     });
 
     it('sin la columna session_id (migración pendiente) reintenta guardar el token sin esa columna', async () => {
@@ -337,15 +591,25 @@ describe('AuthService - register', () => {
       const mock = await setup({
         'refresh_tokens:insert': {
           data: null,
-          error: { code: 'PGRST204', message: "Could not find the 'session_id' column of 'refresh_tokens'" },
+          error: {
+            code: 'PGRST204',
+            message:
+              "Could not find the 'session_id' column of 'refresh_tokens'",
+          },
         },
       });
 
       await expect(
-        (service as any).generateTokenPair('user-1', 'tutor@ejemplo.com', Role.USER),
+        (service as any).generateTokenPair(
+          'user-1',
+          'tutor@ejemplo.com',
+          Role.USER,
+        ),
       ).rejects.toThrow('No pudimos iniciar tu sesión');
 
-      const inserts = mock.calls.filter((c) => c.table === 'refresh_tokens' && c.op === 'insert');
+      const inserts = mock.calls.filter(
+        (c) => c.table === 'refresh_tokens' && c.op === 'insert',
+      );
       expect(inserts).toHaveLength(2);
       expect(inserts[1].payload).not.toHaveProperty('session_id');
     });
@@ -353,9 +617,15 @@ describe('AuthService - register', () => {
 
   it('mantiene el mensaje claro aunque la reversión en Auth falle', async () => {
     const mock = await setup({
-      'profiles:insert': { data: null, error: { code: 'XX000', message: 'unexpected' } },
+      'profiles:insert': {
+        data: null,
+        error: { code: 'XX000', message: 'unexpected' },
+      },
     });
-    mock.client.auth.admin.deleteUser.mockResolvedValue({ data: null, error: { message: 'User not allowed' } });
+    mock.client.auth.admin.deleteUser.mockResolvedValue({
+      data: null,
+      error: { message: 'User not allowed' },
+    });
 
     await expect(service.register(baseDto())).rejects.toThrow(
       'No pudimos crear tu perfil. Intenta de nuevo en unos minutos.',

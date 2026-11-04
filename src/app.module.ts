@@ -15,6 +15,8 @@ import { LicensesModule } from './modules/licenses/licenses.module';
 import { AssessmentsModule } from './modules/assessments/assessments.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { PrivacyModule } from './modules/privacy/privacy.module';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { TelemetryModule } from './modules/telemetry/telemetry.module';
     AssessmentsModule,
     ProfileModule,
     TelemetryModule,
+    AuditModule,
+    PrivacyModule,
   ],
   controllers: [AppController],
   providers: [
