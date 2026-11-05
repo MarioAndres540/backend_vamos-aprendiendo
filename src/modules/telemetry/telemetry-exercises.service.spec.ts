@@ -566,6 +566,25 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
       ]);
     });
 
+    it('sin la migración (columna claimed_at inexistente) no falla: responde 0 cobrados', async () => {
+      setup({
+        ...linked(),
+        'xp_ledger:update': [
+          {
+            data: null,
+            error: { code: '42703', message: 'column xp_ledger.claimed_at does not exist' },
+          },
+        ],
+      });
+
+      const result = await service.claimXp(USER_ID, {
+        studentId: STUDENT_ID,
+        exerciseIds: ['matematicas.d_4'],
+      });
+
+      expect(result).toEqual({ studentId: STUDENT_ID, claimed: 0, xpClaimed: 0 });
+    });
+
     it('un estudiante ajeno responde 403 y no toca el libro de XP', async () => {
       const mock = setup({ 'tutor_students:select': [{ data: null }] });
 
@@ -651,6 +670,32 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
           awardedAt: '2026-10-30T15:00:00Z',
         },
       ]);
+    });
+
+    it('sin la migración responde como antes: todo el XP cuenta y no se informa lo por cobrar', async () => {
+      setup({
+        ...linked(),
+        'xp_ledger:select': [
+          {
+            data: null,
+            error: { code: '42703', message: 'column xp_ledger.claimed_at does not exist' },
+          },
+          {
+            data: [
+              { source_id: 'matematicas.d_4', xp_amount: 10, created_at: '2026-11-01T09:00:00Z' },
+              { source_id: 'matematicas.d_5', xp_amount: 10, created_at: '2026-11-01T09:05:00Z' },
+            ],
+          },
+        ],
+        'exercise_catalog:select': [{ data: [] }],
+      });
+
+      const xp = await service.getXp(USER_ID, STUDENT_ID);
+
+      expect(xp.totalXp).toBe(20);
+      expect(xp.rewardsCount).toBe(2);
+      expect(xp).not.toHaveProperty('pending');
+      expect(xp).not.toHaveProperty('pendingXp');
     });
 
     it('sin recompensas el total es 0 y el historial vacío', async () => {

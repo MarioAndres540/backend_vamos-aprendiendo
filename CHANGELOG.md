@@ -29,6 +29,7 @@ Spec: `docs/specs/0004-proteccion-datos-personales.md` (criterios PD-POL, PD-CON
 - El cliente de Supabase en memoria para pruebas ahora soporta `update`, `delete` y `rpc`. Pruebas: 264 en verde.
 
 ### 🏆 La experiencia se cobra en el cofre del juego (2026-11-03)
+- **Compatible con la base sin migrar (2026-11-05):** si `xp_ledger.claimed_at` todavía no existe, `GET /telemetry/xp` responde como antes (todo el XP cuenta y no trae `pending`), `POST /telemetry/xp/claim` responde 0 cobrados y el seguimiento del profesor cuenta todo el XP, todos con un aviso en el log. Antes fallaban con error y la app mostraba "Sin conexión" y el cofre sin cifras. Con la migración aplicada todo funciona como se describe arriba.
 - Migración `database/migrations/20261103_xp_claims.sql`: `xp_ledger.claimed_at` (NULL = aprobado pero por cobrar). **Aplicar antes de desplegar.** No rellena lo anterior: la app declara como cobrado lo que el jugador ya había cobrado; si prefieres que todo lo anterior cuente ya, el archivo trae el `UPDATE` comentado.
 - `POST /telemetry/xp/claim` (`ClaimXpDto`: `studentId?`, `exerciseIds[]`): marca como cobradas las filas por cobrar del propio estudiante y ambiente; idempotente. Responde `claimed` y `xpClaimed`.
 - `GET /telemetry/xp`: `totalXp`, `rewardsCount` e `history` cuentan solo lo cobrado; nuevos `pendingXp` y `pending[]` con lo aprobado sin cobrar. El XP del estudiante en el seguimiento del profesor también cuenta solo lo cobrado.

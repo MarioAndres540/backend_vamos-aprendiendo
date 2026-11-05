@@ -416,7 +416,7 @@ export class TeacherService {
         const routesBySubject = await this.subjectRoutes(subjects.map((s) => s.id));
         const exerciseIds = [...routesBySubject.values()].flat().flatMap((r) => r.exercises.map((e) => e.id));
 
-        const [studentResult, attemptsResult, completionsResult, xpResult, sessionsResult] = await Promise.all([
+        const [studentResult, attemptsResult, completionsResult, claimedXpResult, sessionsResult] = await Promise.all([
             supabase
                 .from('students')
                 .select('id, first_name, last_name, birth_date, age, document_type, document_number')
@@ -456,6 +456,19 @@ export class TeacherService {
         if (studentResult.error) this.fail('consultar el estudiante', studentResult.error);
         if (attemptsResult.error) this.fail('consultar los intentos', attemptsResult.error);
         if (completionsResult.error) this.fail('consultar los ejercicios aprobados', completionsResult.error);
+        // Hasta aplicar la migración 20261103_xp_claims.sql no existe xp_ledger.claimed_at: se cuenta todo el XP como antes
+        let xpResult = claimedXpResult;
+        if (
+            claimedXpResult.error &&
+            (claimedXpResult.error.code === '42703' || (claimedXpResult.error.message ?? '').includes('claimed_at'))
+        ) {
+            xpResult = await supabase
+                .from('xp_ledger')
+                .select('xp_amount')
+                .eq('estudiante_id', studentId)
+                .eq('context', SCHOOL_CONTEXT)
+                .eq('institution_id', school);
+        }
         if (xpResult.error) this.fail('consultar la experiencia', xpResult.error);
         if (sessionsResult.error) this.fail('consultar el tiempo de juego', sessionsResult.error);
 

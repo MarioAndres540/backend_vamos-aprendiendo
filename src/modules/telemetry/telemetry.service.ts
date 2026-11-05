@@ -439,6 +439,14 @@ export class TelemetryService {
     return { studentId: owner.studentId, ...(rpcResult.data as ImportResult) };
   }
 
+  /** El error de Postgres/PostgREST por una columna que no existe (migración sin aplicar) */
+  private isMissingClaimColumn(error: { code?: string; message?: string }) {
+    return (
+      error.code === '42703' ||
+      (error.message ?? '').includes('claimed_at')
+    );
+  }
+
   /**
    * Cobra en el cofre el XP de los ejercicios indicados: marca sus filas del libro de XP como cobradas. Solo afecta a las
    * del propio estudiante en su ambiente, y es idempotente (lo ya cobrado o inexistente se omite).
@@ -456,6 +464,13 @@ export class TelemetryService {
       .in('source_id', dto.exerciseIds)
       .is('claimed_at', null)
       .select('xp_amount');
+    if (error && this.isMissingClaimColumn(error)) {
+      // Sin la migración no hay nada que marcar: la app lo reintenta cuando esté aplicada
+      this.logger.warn(
+        'xp_ledger.claimed_at no existe: aplica la migración 20261103_xp_claims.sql.',
+      );
+      return { studentId: owner.studentId, claimed: 0, xpClaimed: 0 };
+    }
     if (error) this.fail('cobrar la experiencia', error);
 
     const claimed = (data ?? []) as { xp_amount: number | string }[];
@@ -565,18 +580,36 @@ export class TelemetryService {
     const owner = await this.resolveOwner(userId, studentId);
     const supabase = this.supabaseService.getClient();
 
-    const ledgerResult = await supabase
-      .from('xp_ledger')
-      .select('source_id, xp_amount, created_at, claimed_at')
-      .eq('owner_id', owner.studentId ?? owner.userId)
-      .eq('context', owner.context)
-      .order('created_at', { ascending: false })
-      .limit(EXERCISE_ROWS_LIMIT);
+    const readLedger = (columns: string) =>
+      supabase
+        .from('xp_ledger')
+        .select(columns)
+        .eq('owner_id', owner.studentId ?? owner.userId)
+        .eq('context', owner.context)
+        .order('created_at', { ascending: false })
+        .limit(EXERCISE_ROWS_LIMIT);
+
+    let ledgerResult = await readLedger(
+      'source_id, xp_amount, created_at, claimed_at',
+    );
+    // Hasta aplicar la migración 20261103_xp_claims.sql la columna claimed_at no existe: se responde como antes
+    // (todo el XP cuenta y no se informa lo "por cobrar") en lugar de fallar y dejar al jugador "sin conexión".
+    const claimsReady = !(
+      ledgerResult.error && this.isMissingClaimColumn(ledgerResult.error)
+    );
+    if (!claimsReady) {
+      this.logger.warn(
+        'xp_ledger.claimed_at no existe: aplica la migración 20261103_xp_claims.sql. Se responde sin separar lo cobrado.',
+      );
+      ledgerResult = await readLedger('source_id, xp_amount, created_at');
+    }
     if (ledgerResult.error)
       this.fail('consultar la experiencia', ledgerResult.error);
 
     // Una fila por ejercicio aprobado: acotada por el tamaño del catálogo
-    const rows = (ledgerResult.data ?? []) as LedgerRow[];
+    const rows = ((ledgerResult.data ?? []) as unknown as LedgerRow[]).map(
+      (row) => (claimsReady ? row : { ...row, claimed_at: row.created_at }),
+    );
     const ledger = rows.filter((row) => row.claimed_at);
     const pendingRows = rows.filter((row) => !row.claimed_at);
     const recent = ledger.slice(0, limit);
@@ -603,11 +636,19 @@ export class TelemetryService {
       studentId: owner.studentId,
       totalXp: ledger.reduce((sum, row) => sum + Number(row.xp_amount), 0),
       rewardsCount: ledger.length,
-      pendingXp: pendingRows.reduce((sum, row) => sum + Number(row.xp_amount), 0),
-      pending: pendingRows.map((row) => ({
-        exerciseId: row.source_id,
-        xp: Number(row.xp_amount),
-      })),
+      // Sin la migración no se separa lo cobrado: estos campos se omiten y la app usa su cálculo local
+      ...(claimsReady
+        ? {
+            pendingXp: pendingRows.reduce(
+              (sum, row) => sum + Number(row.xp_amount),
+              0,
+            ),
+            pending: pendingRows.map((row) => ({
+              exerciseId: row.source_id,
+              xp: Number(row.xp_amount),
+            })),
+          }
+        : {}),
       history: recent.map((row) => ({
         exerciseId: row.source_id,
         label: labels.get(row.source_id) ?? row.source_id,
