@@ -7,6 +7,12 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ## [Unreleased]
 
+### 🎮 Nivel del jugador en la base de datos (2026-11-05)
+**Acción requerida:** ejecutar `database/migrations/20261105_player_levels.sql` (tabla `player_levels`). Sin ella, `GET /telemetry/level` responde nivel 1 para todos y `PUT /telemetry/level` falla al guardar.
+- `GET /telemetry/level`: nivel, si cruzó el portal, si completó y cobró todas las actividades del nivel 1 y cuántas lleva.
+- `PUT /telemetry/level`: registra el avance al nivel 2. Solo avanza si el estudiante cobró todas las actividades activas (403 si no), el nivel nunca baja y repetir la petición no cambia nada.
+- Pruebas: 4 casos nuevos en `telemetry-exercises.service.spec.ts`.
+
 ### 🛡️ Protección de datos personales — Ley 1581 de 2012 (2026-11-04)
 Spec: `docs/specs/0004-proteccion-datos-personales.md` (criterios PD-POL, PD-CONS, PD-SENS, PD-ARCO y PD-ADM).
 **Acción requerida:** ejecutar `database/migrations/20261104_data_protection.sql` antes de desplegar. Sin esa migración, el registro falla, porque guarda la prueba de las autorizaciones y si no puede guardarla revierte el registro.

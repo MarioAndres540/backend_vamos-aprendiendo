@@ -37,6 +37,12 @@ const createSupabaseMock = (
       }
       return builder;
     });
+    builder.upsert = jest.fn((values: any, options: any) => {
+      op = 'upsert';
+      call = { table, op, filters: [['values', values], ['options', options]] };
+      calls.push(call);
+      return builder;
+    });
     builder.update = jest.fn((values: any) => {
       op = 'update';
       call = { table, op, filters: [['values', values]] };
@@ -597,6 +603,91 @@ describe('TelemetryService — ejercicios, XP y progreso por ruta', () => {
       expect(
         mock.calls.some((c: any) => c.table === 'xp_ledger'),
       ).toBe(false);
+    });
+  });
+
+  describe('nivel del jugador (GET y PUT /telemetry/level)', () => {
+    const linked = () => ({
+      'tutor_students:select': [{ data: { id: 'link-1' } }],
+      'students:select': [{ data: { age: 7 } }],
+    });
+    const catalog = [{ id: 'escritura.lo_a' }, { id: 'matematicas.d_1' }];
+
+    it('sin fila guardada está en el nivel 1 y dice cuántas actividades lleva cobradas', async () => {
+      setup({
+        ...linked(),
+        'player_levels:select': [{ data: null }],
+        'exercise_catalog:select': [{ data: catalog }],
+        'xp_ledger:select': [{ data: [{ source_id: 'escritura.lo_a' }] }],
+      });
+
+      const level = await service.getLevel(USER_ID, STUDENT_ID);
+
+      expect(level).toEqual({
+        studentId: STUDENT_ID,
+        level: 1,
+        portalPassed: false,
+        level1Completed: false,
+        completedExercises: 1,
+        totalExercises: 2,
+      });
+    });
+
+    it('no deja avanzar si faltan actividades por cobrar', async () => {
+      const mock = setup({
+        ...linked(),
+        'player_levels:select': [{ data: null }],
+        'exercise_catalog:select': [{ data: catalog }],
+        'xp_ledger:select': [{ data: [{ source_id: 'escritura.lo_a' }] }],
+      });
+
+      await expect(
+        service.updateLevel(USER_ID, { studentId: STUDENT_ID, level: 2 }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(mock.calls.some((c: any) => c.op === 'upsert')).toBe(false);
+    });
+
+    it('guarda el nivel 2 y el portal cuando ya cobró todo el nivel 1', async () => {
+      const mock = setup({
+        ...linked(),
+        'player_levels:select': [{ data: null }],
+        'exercise_catalog:select': [{ data: catalog }],
+        'xp_ledger:select': [
+          { data: [{ source_id: 'escritura.lo_a' }, { source_id: 'matematicas.d_1' }] },
+        ],
+      });
+
+      const level = await service.updateLevel(USER_ID, {
+        studentId: STUDENT_ID,
+        level: 2,
+      });
+
+      expect(level).toMatchObject({ level: 2, portalPassed: true });
+      const upsert = mock.calls.find((c: any) => c.op === 'upsert');
+      expect(upsert.filters[0][1]).toMatchObject({
+        estudiante_id: STUDENT_ID,
+        level: 2,
+        portal_passed: true,
+      });
+      expect(upsert.filters[1][1]).toEqual({ onConflict: 'owner_id,context' });
+    });
+
+    it('repetir un avance ya guardado no escribe nada y el nivel no baja', async () => {
+      const mock = setup({
+        ...linked(),
+        'player_levels:select': [{ data: { level: 2, portal_passed: true } }],
+        'exercise_catalog:select': [{ data: catalog }],
+        'xp_ledger:select': [{ data: [] }],
+      });
+
+      const level = await service.updateLevel(USER_ID, {
+        studentId: STUDENT_ID,
+        level: 1,
+        portalPassed: true,
+      });
+
+      expect(level).toMatchObject({ level: 2, portalPassed: true });
+      expect(mock.calls.some((c: any) => c.op === 'upsert')).toBe(false);
     });
   });
 

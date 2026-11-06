@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -26,6 +27,7 @@ import { QueryXpDto } from './dto/query-xp.dto';
 import { RecordExerciseDto } from './dto/record-exercise.dto';
 import { ImportExercisesDto } from './dto/import-exercises.dto';
 import { ClaimXpDto } from './dto/claim-xp.dto';
+import { UpdateLevelDto } from './dto/update-level.dto';
 
 // Telemetría de la app de Unity (tablas de las migraciones 20261001_unity_telemetry_cognitive_dashboards y
 // 20261031_exercise_attempts_and_xp). Contrato para Unity: backend/docs/unity-exercises.md
@@ -127,6 +129,46 @@ export class TelemetryController {
     @Body() dto: ClaimXpDto,
   ) {
     return this.telemetryService.claimXp(user.userId, dto);
+  }
+
+  @Get('level')
+  @ApiOperation({
+    summary: 'Nivel del jugador y si ya completó todas las actividades del nivel 1',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'level, portalPassed, level1Completed, completedExercises y totalExercises',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'El estudiante no está vinculado a la cuenta',
+  })
+  getLevel(
+    @CurrentUser() user: { userId: string },
+    @Query() query: QueryXpDto,
+  ) {
+    return this.telemetryService.getLevel(user.userId, query.studentId);
+  }
+
+  @Put('level')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard, ActiveAccessGuard)
+  @Roles(Role.USER, Role.TEST, Role.STUDENT, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Registrar que el jugador cruzó el portal o llegó al nivel 2',
+    description:
+      'El nivel nunca baja y solo avanza si el estudiante cobró la experiencia de todas las actividades del nivel 1. Idempotente.',
+  })
+  @ApiResponse({ status: 200, description: 'El nivel guardado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Faltan actividades por completar o el estudiante no está vinculado',
+  })
+  updateLevel(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: UpdateLevelDto,
+  ) {
+    return this.telemetryService.updateLevel(user.userId, dto);
   }
 
   @Get('route-progress')

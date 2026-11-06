@@ -10,6 +10,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { RecordExerciseDto } from './dto/record-exercise.dto';
 import { ImportExercisesDto } from './dto/import-exercises.dto';
 import { ClaimXpDto } from './dto/claim-xp.dto';
+import { UpdateLevelDto } from './dto/update-level.dto';
 import {
   findActiveInstitutionId,
   ProgressContext,
@@ -437,6 +438,122 @@ export class TelemetryService {
     if (rpcResult.error) this.fail('importar los ejercicios', rpcResult.error);
 
     return { studentId: owner.studentId, ...(rpcResult.data as ImportResult) };
+  }
+
+  /**
+   * Nivel del jugador (1 por defecto), guardado por estudiante y ambiente. Incluye si ya cobró todas las actividades del nivel 1
+   * (lo que permite abrir el portal y pasar al nivel 2).
+   */
+  async getLevel(userId: string, studentId?: string) {
+    const owner = await this.resolveOwner(userId, studentId);
+    return { studentId: owner.studentId, ...(await this.readLevel(owner)) };
+  }
+
+  /**
+   * Registra que el jugador cruzó el portal o llegó al nivel 2. El nivel nunca baja y solo avanza si el estudiante cobró en el
+   * cofre la experiencia de todas las actividades activas del catálogo; repetir la petición no cambia nada.
+   */
+  async updateLevel(userId: string, dto: UpdateLevelDto) {
+    const owner = await this.resolveOwner(userId, dto.studentId);
+    if (!owner.studentId) await this.assertHasNoLinkedStudents(userId);
+
+    const current = await this.readLevel(owner);
+    const level = Math.max(current.level, dto.level ?? 1);
+    const portalPassed =
+      current.portalPassed || dto.portalPassed === true || level >= 2;
+    const advancing = level > current.level || portalPassed !== current.portalPassed;
+    if (!advancing) return { studentId: owner.studentId, ...current };
+
+    if (!current.level1Completed) {
+      throw new ForbiddenException(
+        'Completa y cobra todas las actividades del nivel 1 antes de avanzar.',
+      );
+    }
+
+    const now = new Date().toISOString();
+    const { error } = await this.supabaseService
+      .getClient()
+      .from('player_levels')
+      .upsert(
+        {
+          usuario_id: owner.userId,
+          estudiante_id: owner.studentId,
+          context: owner.context,
+          institution_id: owner.institutionId,
+          level,
+          portal_passed: portalPassed,
+          level_reached_at: level > current.level ? now : undefined,
+          updated_at: now,
+        },
+        { onConflict: 'owner_id,context' },
+      );
+    if (error) this.fail('guardar el nivel', error);
+
+    return {
+      studentId: owner.studentId,
+      ...current,
+      level,
+      portalPassed,
+    };
+  }
+
+  private async readLevel(owner: Owner) {
+    const supabase = this.supabaseService.getClient();
+    const ownerId = owner.studentId ?? owner.userId;
+
+    const readClaimed = (onlyClaimed: boolean) => {
+      const query = supabase
+        .from('xp_ledger')
+        .select('source_id')
+        .eq('owner_id', ownerId)
+        .eq('context', owner.context);
+      return onlyClaimed ? query.not('claimed_at', 'is', null) : query;
+    };
+
+    const [rowResult, catalogResult, claimedResult] = await Promise.all([
+      supabase
+        .from('player_levels')
+        .select('level, portal_passed')
+        .eq('owner_id', ownerId)
+        .eq('context', owner.context)
+        .maybeSingle(),
+      supabase.from('exercise_catalog').select('id').eq('is_active', true),
+      readClaimed(true),
+    ]);
+
+    // Sin la tabla (migración sin aplicar) todos están en el nivel 1; lo demás es un error real
+    const missingTable = rowResult.error?.code === '42P01';
+    if (rowResult.error && !missingTable)
+      this.fail('consultar el nivel', rowResult.error);
+    if (catalogResult.error)
+      this.fail('consultar el catálogo de ejercicios', catalogResult.error);
+
+    let claimedRows = claimedResult;
+    if (claimedRows.error && this.isMissingClaimColumn(claimedRows.error))
+      claimedRows = await readClaimed(false);
+    if (claimedRows.error)
+      this.fail('consultar la experiencia cobrada', claimedRows.error);
+
+    const claimed = new Set(
+      ((claimedRows.data ?? []) as unknown as { source_id: string }[]).map(
+        (row) => row.source_id,
+      ),
+    );
+    const catalog = ((catalogResult.data ?? []) as { id: string }[]).map(
+      (row) => row.id,
+    );
+    const completed = catalog.filter((id) => claimed.has(id)).length;
+    const row = rowResult.data as
+      | { level: number; portal_passed: boolean }
+      | null;
+
+    return {
+      level: row?.level ?? 1,
+      portalPassed: row?.portal_passed ?? false,
+      level1Completed: catalog.length > 0 && completed >= catalog.length,
+      completedExercises: completed,
+      totalExercises: catalog.length,
+    };
   }
 
   /** El error de Postgres/PostgREST por una columna que no existe (migración sin aplicar) */
